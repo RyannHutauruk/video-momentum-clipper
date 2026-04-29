@@ -38,8 +38,10 @@ for d in (UPLOAD_DIR, CLIP_DIR, JOB_DIR):
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "500"))
 COMPRESS_THRESHOLD_MB = int(os.environ.get("COMPRESS_THRESHOLD_MB", "120"))
-COMPRESS_TARGET_HEIGHT = int(os.environ.get("COMPRESS_TARGET_HEIGHT", "720"))
-COMPRESS_TARGET_BITRATE = os.environ.get("COMPRESS_TARGET_BITRATE", "2000k")
+# Keep the proxy at 1080p so the 9:16 center-crop still has enough horizontal
+# pixels to fill 1080 wide without softening. 720p was visibly soft on phones.
+COMPRESS_TARGET_HEIGHT = int(os.environ.get("COMPRESS_TARGET_HEIGHT", "1080"))
+COMPRESS_TARGET_BITRATE = os.environ.get("COMPRESS_TARGET_BITRATE", "4500k")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
