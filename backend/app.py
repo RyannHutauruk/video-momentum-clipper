@@ -194,6 +194,16 @@ def _download_url(url: str, dest_dir: Path, job_id: str) -> Path:
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
         err = proc.stderr.decode("utf-8", errors="replace")
+        # YouTube blocks server-side downloads without a logged-in cookie
+        # session — surface a friendly message instead of the raw yt-dlp dump
+        # so the frontend can route users to Drive/Dropbox/direct .mp4 links.
+        is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+        if is_yt and ("Sign in" in err or "cookies" in err or "bot" in err.lower()):
+            raise RuntimeError(
+                "YouTube requires a sign-in to download from a server. "
+                "Use a Google Drive / Dropbox / direct .mp4 link, "
+                "or download the video to your computer first and upload it."
+            )
         raise RuntimeError(
             f"yt-dlp failed for {url[:80]}:\n{err[-1500:]}"
         )

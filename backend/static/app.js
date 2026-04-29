@@ -60,14 +60,35 @@ function onFileChosen() {
 
 function setStatus(text, sub = "", pct = null) {
   statusEl.classList.remove("hidden");
+  statusEl.classList.remove("is-error");
   statusText.textContent = text;
   statusSub.textContent = sub;
   if (pct !== null) barFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
 }
 
-function showError(msg) {
+function showError(msg, hint = "") {
   statusEl.classList.remove("hidden");
-  statusEl.innerHTML = `<div class="error">${msg}</div>`;
+  statusEl.classList.add("is-error");
+  statusText.textContent = `Failed — ${msg}`;
+  statusSub.textContent = hint;
+  barFill.style.width = "0%";
+}
+
+function friendlyError(raw) {
+  const m = String(raw || "");
+  if (/youtu\.?be|youtube\.com/i.test(m) && /sign in|cookies|bot/i.test(m)) {
+    return {
+      msg: "YouTube blocks server-side downloads.",
+      hint: "Use Google Drive / Dropbox / a direct .mp4 link, or download the YouTube video to your computer first and upload it.",
+    };
+  }
+  if (/HTTP 413/i.test(m) || /too large/i.test(m)) {
+    return {
+      msg: "File too large for direct upload through this preview URL.",
+      hint: "Try the Paste URL tab with a Google Drive or Dropbox share link.",
+    };
+  }
+  return { msg: m, hint: "" };
 }
 
 form.addEventListener("submit", async (e) => {
@@ -81,6 +102,9 @@ form.addEventListener("submit", async (e) => {
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
   resultsEl.innerHTML = "";
+  // clear any prior error so the progress UI shows up cleanly on retry
+  statusEl.classList.remove("is-error");
+  setStatus("Starting…", "", 5);
 
   try {
     let result;
@@ -110,7 +134,8 @@ form.addEventListener("submit", async (e) => {
     setStatus("Queued…", `Job ${result.job_id}`, 30);
     await pollJob(result.job_id);
   } catch (err) {
-    showError(`Failed: ${err.message}`);
+    const f = friendlyError(err.message);
+    showError(f.msg, f.hint);
   } finally {
     goBtn.disabled = false;
   }

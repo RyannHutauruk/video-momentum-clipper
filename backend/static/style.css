@@ -410,6 +410,16 @@ main {
 }
 .error { color: #ff7390; font-size: 14px; padding: 4px 0; }
 
+/* When the status card is showing an error, swap the spinner for a stop dot
+   and tint the bar/text. setStatus() removes is-error on the next attempt. */
+.status-card.is-error .spinner {
+  border-color: rgba(255, 115, 144, 0.35);
+  border-top-color: #ff7390;
+  animation: none;
+}
+.status-card.is-error #status-text { color: #ff7390; }
+.status-card.is-error .bar-fill { background: #ff7390; }
+
 /* ─── Results ────────────────────────────────── */
 .results { margin-top: 24px; }
 .results-header {
