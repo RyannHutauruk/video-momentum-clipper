@@ -13,6 +13,19 @@ const tabFile = document.getElementById("tab-file");
 const tabUrl = document.getElementById("tab-url");
 const paneFile = document.getElementById("pane-file");
 const paneUrl = document.getElementById("pane-url");
+const customControls = document.getElementById("custom-controls");
+
+function currentGoal() {
+  const r = document.querySelector('input[name="goal"]:checked');
+  return r ? r.value : "tiktok";
+}
+function syncCustomVisibility() {
+  customControls.classList.toggle("hidden", currentGoal() !== "custom");
+}
+document.querySelectorAll('input[name="goal"]').forEach((r) =>
+  r.addEventListener("change", syncCustomVisibility)
+);
+syncCustomVisibility();
 
 let activeTab = "file";
 function switchTab(name) {
@@ -59,6 +72,7 @@ function showError(msg) {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const goal = currentGoal();
   const nClips = document.getElementById("n_clips").value;
   const clipLen = document.getElementById("clip_len").value;
   const safety = document.getElementById("safety_boost").checked ? "1" : "0";
@@ -75,7 +89,7 @@ form.addEventListener("submit", async (e) => {
       if (!url) { showError("Paste a URL first."); goBtn.disabled = false; return; }
       setStatus("Fetching from URL…", url.slice(0, 80), 10);
       result = await xhrPostJSON("/api/upload_url", {
-        url, n_clips: nClips, clip_len: clipLen,
+        url, goal, n_clips: nClips, clip_len: clipLen,
         safety_boost: safety, subtitles: subs,
       });
     } else {
@@ -83,6 +97,7 @@ form.addEventListener("submit", async (e) => {
       if (!f) { showError("Choose a video first."); goBtn.disabled = false; return; }
       const fd = new FormData();
       fd.append("video", f);
+      fd.append("goal", goal);
       fd.append("n_clips", nClips);
       fd.append("clip_len", clipLen);
       fd.append("safety_boost", safety);
@@ -175,23 +190,25 @@ async function pollJob(jobId) {
     const job = await xhrGetJSON(`/api/jobs/${jobId}`);
 
     if (job.status === "queued" && lastStatus !== "queued") {
-      setStatus("Queued…", "", 30);
+      setStatus("Queued", "Spinning up the worker", 25);
     } else if (job.status === "compressing") {
       const c = job.compress || {};
-      const sub = c.input_mb ? `${c.input_mb} MB → 1080p` : "shrinking source";
-      setStatus("Compressing source…", sub, 40);
+      const sub = c.input_mb ? `${c.input_mb} MB → 1080p proxy` : "Shrinking source for speed";
+      setStatus("Compressing source", sub, 40);
     } else if (job.status === "transcribing") {
-      setStatus("Transcribing speech…", "Whisper running locally", 55);
+      const dur = fmtDuration(job.duration);
+      setStatus("Transcribing speech", `Local Whisper · ${dur} of audio`, 55);
     } else if (job.status === "analyzing") {
-      setStatus("Analyzing audio + motion…", `Source ${job.duration}s`, 50);
+      setStatus("Finding the best moments", `Audio peaks + motion across ${fmtDuration(job.duration)}`, 65);
     } else if (job.status === "clipping") {
       const made = (job.clips || []).length;
       const total = (job.moments || []).length || job.n_clips || 4;
-      const pct = 60 + (made / total) * 35;
-      setStatus(`Generating clips… (${made}/${total})`, "Burning hook + CTA", pct);
+      const pct = 70 + (made / total) * 28;
+      setStatus(`Cutting clip ${Math.min(made + 1, total)} of ${total}`, "Burning captions + hook + CTA", pct);
       renderClips(job, /*partial=*/true);
     } else if (job.status === "done") {
-      setStatus("Done!", `${(job.clips || []).length} clips ready`, 100);
+      const n = (job.clips || []).length;
+      setStatus(`Done — ${n} clip${n === 1 ? "" : "s"} ready`, "Scroll down to download", 100);
       renderClips(job);
       return;
     } else if (job.status === "error") {
@@ -201,30 +218,61 @@ async function pollJob(jobId) {
   }
 }
 
+const GOAL_LABELS = {
+  tiktok: "TikTok / Reels",
+  shorts: "YouTube Shorts",
+  podcast: "Podcast highlights",
+  custom: "Custom",
+};
+
+function fmtDuration(seconds) {
+  if (!seconds && seconds !== 0) return "";
+  const s = Math.round(seconds);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${s}s`;
+}
+
 function renderClips(job, partial = false) {
   resultsEl.classList.remove("hidden");
   resultsEl.innerHTML = "";
   const clips = job.clips || [];
+  const goalLabel = GOAL_LABELS[job.goal] || "Clips";
+  if (clips.length || !partial) {
+    const header = document.createElement("div");
+    header.className = "results-header";
+    const dur = job.duration ? `${fmtDuration(job.duration)} source` : "";
+    const len = job.clip_len ? `≈${Math.round(job.clip_len)}s each` : "";
+    const pieces = [
+      `${clips.length} clip${clips.length === 1 ? "" : "s"}`,
+      len, dur,
+    ].filter(Boolean).join(" · ");
+    header.innerHTML = `
+      <strong>${goalLabel}</strong>
+      <span class="muted small">${pieces}</span>`;
+    resultsEl.appendChild(header);
+  }
   for (const c of clips) {
     const node = document.createElement("div");
     node.className = "clip";
+    const viral = Math.round((c.score || 0) * 100);
     node.innerHTML = `
       <video src="${c.url}" controls preload="metadata" playsinline></video>
       <div class="clip-meta">
         <div class="clip-title">
           <span>Clip ${c.index}</span>
-          <span class="clip-time">${c.start}s → ${c.end}s · ${c.duration}s</span>
+          <span class="clip-time">${fmtDuration(c.start)} → ${fmtDuration(c.end)} · ${c.duration}s</span>
         </div>
-        <div class="clip-hook">"${c.hook}"</div>
+        <div class="clip-hook">“${c.hook}”</div>
         <div class="score-pills">
-          <span class="pill">score ${c.score}</span>
+          <span class="pill">viral score ${viral}</span>
           <span class="pill audio">audio ${c.audio_score}</span>
           <span class="pill motion">motion ${c.motion_score}</span>
           ${c.subtitles ? '<span class="pill subs">subtitles</span>' : ''}
           ${c.safety_boost ? '<span class="pill boost">safety boost</span>' : ''}
         </div>
         <div class="actions">
-          <a class="primary" href="${c.url}" download="momentum_clip_${c.index}.mp4">Download</a>
+          <a class="primary" href="${c.url}" download="reelmint_clip_${c.index}.mp4">Download</a>
           <a href="${c.url}" target="_blank" rel="noopener">Open</a>
         </div>
       </div>

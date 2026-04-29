@@ -47,6 +47,75 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
+# Goal presets — translate "what platform am I posting to" into clip length +
+# how many clips to extract per minute of source. Tuned from public retention
+# data: TikTok peaks at 21–34s, YouTube Shorts at 30–60s, podcast highlights
+# work up to ~90s when the source is interesting.
+GOAL_PRESETS: dict[str, dict] = {
+    "tiktok": {
+        "label": "TikTok / Reels",
+        "blurb": "15–30s clips, ~1–2 per minute of source",
+        "clip_len": 22.0,
+        "per_minute": 1.5,
+        "max_total": 8,
+        "min_total": 1,
+    },
+    "shorts": {
+        "label": "YouTube Shorts",
+        "blurb": "30–60s clips, ~1 per minute of source",
+        "clip_len": 45.0,
+        "per_minute": 1.0,
+        "max_total": 6,
+        "min_total": 1,
+    },
+    "podcast": {
+        "label": "Podcast highlights",
+        "blurb": "60–90s clips, ~1 every 2 min of source",
+        "clip_len": 70.0,
+        "per_minute": 0.5,
+        "max_total": 4,
+        "min_total": 1,
+    },
+}
+
+
+def _auto_count_for(duration_s: float, preset: dict) -> int:
+    """How many clips to make for a given source duration + preset."""
+    minutes = max(1.0, duration_s / 60.0)
+    n = int(round(minutes * preset["per_minute"]))
+    return max(preset["min_total"], min(preset["max_total"], n))
+
+
+def _resolve_goal(
+    raw_goal: str | None,
+    duration_s: float,
+    raw_n_clips,
+    raw_clip_len,
+) -> tuple[str, int, float]:
+    """Map a goal preset (or 'custom') + the form fields into (goal, n_clips, clip_len).
+
+    For preset goals, the user's n_clips/clip_len fields are ignored: the
+    preset + source duration decide. For 'custom', the user's fields win.
+    """
+    goal = (raw_goal or "tiktok").lower().strip()
+    if goal in GOAL_PRESETS:
+        preset = GOAL_PRESETS[goal]
+        n_clips = _auto_count_for(duration_s, preset)
+        clip_len = float(preset["clip_len"])
+        return goal, n_clips, clip_len
+
+    # Custom: clamp manual values
+    try:
+        n_clips = max(1, min(8, int(raw_n_clips)))
+    except (ValueError, TypeError):
+        n_clips = 4
+    try:
+        clip_len = max(8.0, min(90.0, float(raw_clip_len)))
+    except (ValueError, TypeError):
+        clip_len = 25.0
+    return "custom", n_clips, clip_len
+
+
 def _job_id() -> str:
     ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
@@ -237,6 +306,16 @@ def health():
     return jsonify({"ok": True, "ffmpeg": has_ffmpeg()})
 
 
+@app.route("/api/presets")
+def list_presets():
+    return jsonify({
+        "presets": [
+            {"id": k, "label": v["label"], "blurb": v["blurb"]}
+            for k, v in GOAL_PRESETS.items()
+        ]
+    })
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload():
     if "video" not in request.files:
@@ -248,17 +327,9 @@ def upload():
     if ext not in ALLOWED_EXT:
         return jsonify({"error": f"unsupported extension {ext}"}), 400
 
-    try:
-        n_clips = max(1, min(8, int(request.form.get("n_clips", 4))))
-    except ValueError:
-        n_clips = 4
-    try:
-        clip_len = max(8.0, min(60.0, float(request.form.get("clip_len", 25))))
-    except ValueError:
-        clip_len = 25.0
-
     safety_boost = request.form.get("safety_boost", "").lower() in ("1", "true", "on", "yes")
     subtitles = request.form.get("subtitles", "").lower() in ("1", "true", "on", "yes")
+    raw_goal = request.form.get("goal", "tiktok")
 
     job_id = _job_id()
     src_path = UPLOAD_DIR / f"{job_id}{ext}"
@@ -270,11 +341,19 @@ def upload():
         src_path.unlink(missing_ok=True)
         return jsonify({"error": f"could not read video: {e}"}), 400
 
+    goal, n_clips, clip_len = _resolve_goal(
+        raw_goal,
+        duration,
+        request.form.get("n_clips"),
+        request.form.get("clip_len"),
+    )
+
     job = {
         "job_id": job_id,
         "status": "queued",
         "source": src_path.name,
         "duration": round(duration, 2),
+        "goal": goal,
         "n_clips": n_clips,
         "clip_len": clip_len,
         "safety_boost": safety_boost,
@@ -293,13 +372,14 @@ def upload():
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
 
 
-def _spawn_job(src_path: Path, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float) -> str:
+def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float) -> str:
     job_id = src_path.stem
     job = {
         "job_id": job_id,
         "status": "queued",
         "source": source_label,
         "duration": round(duration, 2),
+        "goal": goal,
         "n_clips": n_clips,
         "clip_len": clip_len,
         "safety_boost": safety_boost,
@@ -329,16 +409,9 @@ def upload_url():
     if parsed.scheme not in {"http", "https"}:
         return jsonify({"error": "url must be http(s)"}), 400
 
-    try:
-        n_clips = max(1, min(8, int(payload.get("n_clips", 4))))
-    except (ValueError, TypeError):
-        n_clips = 4
-    try:
-        clip_len = max(8.0, min(60.0, float(payload.get("clip_len", 25))))
-    except (ValueError, TypeError):
-        clip_len = 25.0
     safety_boost = str(payload.get("safety_boost", "")).lower() in ("1", "true", "on", "yes")
     subtitles = str(payload.get("subtitles", "")).lower() in ("1", "true", "on", "yes")
+    raw_goal = payload.get("goal") or "tiktok"
 
     job_id = _job_id()
     try:
@@ -352,7 +425,12 @@ def upload_url():
         src_path.unlink(missing_ok=True)
         return jsonify({"error": f"could not read video: {e}"}), 400
 
-    final_id = _spawn_job(src_path, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration)
+    goal, n_clips, clip_len = _resolve_goal(
+        raw_goal, duration,
+        payload.get("n_clips"), payload.get("clip_len"),
+    )
+
+    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration)
     return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 
