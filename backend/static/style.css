@@ -127,6 +127,28 @@ main {
   cursor: progress;
 }
 
+.boost {
+  margin-top: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.boost input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  width: 16px; height: 16px;
+}
+.boost-text { display: flex; flex-direction: column; gap: 4px; }
+.boost-text strong { font-size: 14px; }
+.boost-text small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+.pill.boost { color: var(--accent); }
+
 .hidden { display: none !important; }
 
 .status-row { display: flex; align-items: center; gap: 14px; }

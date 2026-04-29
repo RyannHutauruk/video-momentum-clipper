@@ -56,6 +56,10 @@ form.addEventListener("submit", async (e) => {
   fd.append("video", f);
   fd.append("n_clips", document.getElementById("n_clips").value);
   fd.append("clip_len", document.getElementById("clip_len").value);
+  fd.append(
+    "safety_boost",
+    document.getElementById("safety_boost").checked ? "1" : "0",
+  );
 
   try {
     setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
@@ -154,6 +158,7 @@ function renderClips(job, partial = false) {
           <span class="pill">score ${c.score}</span>
           <span class="pill audio">audio ${c.audio_score}</span>
           <span class="pill motion">motion ${c.motion_score}</span>
+          ${c.safety_boost ? '<span class="pill boost">safety boost</span>' : ''}
         </div>
         <div class="actions">
           <a class="primary" href="${c.url}" download="momentum_clip_${c.index}.mp4">Download</a>

@@ -62,7 +62,13 @@ def _load_job(job_id: str) -> dict | None:
         return None
 
 
-def _process(job_id: str, src_path: Path, n_clips: int, clip_len: float) -> None:
+def _process(
+    job_id: str,
+    src_path: Path,
+    n_clips: int,
+    clip_len: float,
+    safety_boost: bool = False,
+) -> None:
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
     try:
@@ -94,7 +100,10 @@ def _process(job_id: str, src_path: Path, n_clips: int, clip_len: float) -> None
             cta = next((c for c in random.sample(CTAS, len(CTAS)) if c not in used_ctas), random.choice(CTAS))
             used_ctas.add(cta)
             out = clips_out / f"clip_{i:02d}.mp4"
-            res = generate_clip(str(src_path), str(out), m.start, m.end, hook=hook, cta=cta)
+            res = generate_clip(
+                str(src_path), str(out), m.start, m.end,
+                hook=hook, cta=cta, safety_boost=safety_boost,
+            )
             job["clips"].append({
                 "index": i,
                 "filename": res.filename,
@@ -106,6 +115,7 @@ def _process(job_id: str, src_path: Path, n_clips: int, clip_len: float) -> None
                 "score": round(m.score, 3),
                 "audio_score": round(m.audio_score, 3),
                 "motion_score": round(m.motion_score, 3),
+                "safety_boost": res.safety_boost,
                 "url": f"/clips/{job_id}/{res.filename}",
             })
             _save_job(job_id, job)
@@ -148,6 +158,8 @@ def upload():
     except ValueError:
         clip_len = 25.0
 
+    safety_boost = request.form.get("safety_boost", "").lower() in ("1", "true", "on", "yes")
+
     job_id = _job_id()
     src_path = UPLOAD_DIR / f"{job_id}{ext}"
     f.save(src_path)
@@ -165,11 +177,16 @@ def upload():
         "duration": round(duration, 2),
         "n_clips": n_clips,
         "clip_len": clip_len,
+        "safety_boost": safety_boost,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
 
-    t = threading.Thread(target=_process, args=(job_id, src_path, n_clips, clip_len), daemon=True)
+    t = threading.Thread(
+        target=_process,
+        args=(job_id, src_path, n_clips, clip_len, safety_boost),
+        daemon=True,
+    )
     t.start()
 
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
