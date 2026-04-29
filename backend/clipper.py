@@ -63,6 +63,7 @@ class ClipResult:
     start: float
     end: float
     safety_boost: bool = False
+    subtitles: bool = False
 
 
 def _pick_font() -> str | None:
@@ -82,15 +83,18 @@ def build_video_filter(
     cta_file: str,
     clip_len: float,
     safety_boost: bool = False,
+    subtitle_file: str | None = None,
 ) -> str:
     """Build the ffmpeg -vf filter chain.
 
     1. (boost) hflip — horizontal mirror
     2. Scale + crop to 1080x1920 cover (with extra zoom when boost is on)
     3. (boost) eq — subtle color grade
-    4. (boost) setpts — slight speed-up
-    5. drawtext hook (top, large) for first 2.5s of OUTPUT
-    6. drawtext cta (bottom) for last 2.5s of OUTPUT
+    4. (subs) subtitles=path.ass — burnt-in word-grouped captions, BEFORE
+       any speed-up so timestamps stay in clip-relative time.
+    5. (boost) setpts — slight speed-up
+    6. drawtext hook (top, large) for first 2.5s of OUTPUT
+    7. drawtext cta (bottom) for last 2.5s of OUTPUT
 
     Uses textfile= to avoid all the escaping pitfalls of inline text
     (apostrophes, colons, commas, etc).
@@ -119,6 +123,17 @@ def build_video_filter(
             f":contrast={SAFETY_CONTRAST}"
             f":gamma={SAFETY_GAMMA}"
         )
+
+    if subtitle_file:
+        # ffmpeg subtitle filter wants escaping for ':', '\\' and '['.
+        sub_arg = (
+            subtitle_file.replace("\\", "\\\\")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+        )
+        parts.append(f"subtitles='{sub_arg}'")
+
+    if safety_boost:
         # Speed-up via setpts; affects the timestamps, so drawtext enable
         # below uses the post-speedup duration.
         parts.append(f"setpts=PTS/{SAFETY_TEMPO}")
@@ -177,6 +192,7 @@ def generate_clip(
     hook: str | None = None,
     cta: str | None = None,
     safety_boost: bool = False,
+    subtitle_phrases: list | None = None,
 ) -> ClipResult:
     hook = hook or random.choice(HOOKS)
     cta = cta or random.choice(CTAS)
@@ -186,13 +202,22 @@ def generate_clip(
     tmp_dir = tempfile.mkdtemp(prefix="momclip_")
     hook_file = os.path.join(tmp_dir, "hook.txt")
     cta_file = os.path.join(tmp_dir, "cta.txt")
+    subtitle_file: str | None = None
+    has_subs = bool(subtitle_phrases)
     try:
         with open(hook_file, "w", encoding="utf-8") as f:
             f.write(hook.upper())
         with open(cta_file, "w", encoding="utf-8") as f:
             f.write(cta)
 
-        vf = build_video_filter(hook_file, cta_file, clip_len, safety_boost)
+        if has_subs:
+            from subtitler import write_ass
+            subtitle_file = os.path.join(tmp_dir, "subs.ass")
+            write_ass(subtitle_phrases, subtitle_file)
+
+        vf = build_video_filter(
+            hook_file, cta_file, clip_len, safety_boost, subtitle_file
+        )
         af = build_audio_filter(safety_boost)
 
         cmd = [
@@ -219,7 +244,9 @@ def generate_clip(
                 f"stderr: {proc.stderr.decode('utf-8', errors='replace')[-2000:]}"
             )
     finally:
-        for p in (hook_file, cta_file):
+        for p in (hook_file, cta_file, subtitle_file):
+            if not p:
+                continue
             try:
                 os.unlink(p)
             except OSError:
@@ -237,4 +264,5 @@ def generate_clip(
         start=start,
         end=end,
         safety_boost=safety_boost,
+        subtitles=has_subs,
     )

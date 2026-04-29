@@ -62,6 +62,7 @@ form.addEventListener("submit", async (e) => {
   const nClips = document.getElementById("n_clips").value;
   const clipLen = document.getElementById("clip_len").value;
   const safety = document.getElementById("safety_boost").checked ? "1" : "0";
+  const subs = document.getElementById("subtitles").checked ? "1" : "0";
 
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
@@ -74,7 +75,8 @@ form.addEventListener("submit", async (e) => {
       if (!url) { showError("Paste a URL first."); goBtn.disabled = false; return; }
       setStatus("Fetching from URL…", url.slice(0, 80), 10);
       result = await xhrPostJSON("/api/upload_url", {
-        url, n_clips: nClips, clip_len: clipLen, safety_boost: safety,
+        url, n_clips: nClips, clip_len: clipLen,
+        safety_boost: safety, subtitles: subs,
       });
     } else {
       const f = fileInput.files[0];
@@ -84,6 +86,7 @@ form.addEventListener("submit", async (e) => {
       fd.append("n_clips", nClips);
       fd.append("clip_len", clipLen);
       fd.append("safety_boost", safety);
+      fd.append("subtitles", subs);
 
       setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
       result = await xhrSendForm("/api/upload", fd);
@@ -175,8 +178,10 @@ async function pollJob(jobId) {
       setStatus("Queued…", "", 30);
     } else if (job.status === "compressing") {
       const c = job.compress || {};
-      const sub = c.input_mb ? `${c.input_mb} MB → 720p` : "shrinking source";
+      const sub = c.input_mb ? `${c.input_mb} MB → 1080p` : "shrinking source";
       setStatus("Compressing source…", sub, 40);
+    } else if (job.status === "transcribing") {
+      setStatus("Transcribing speech…", "Whisper running locally", 55);
     } else if (job.status === "analyzing") {
       setStatus("Analyzing audio + motion…", `Source ${job.duration}s`, 50);
     } else if (job.status === "clipping") {
@@ -215,6 +220,7 @@ function renderClips(job, partial = false) {
           <span class="pill">score ${c.score}</span>
           <span class="pill audio">audio ${c.audio_score}</span>
           <span class="pill motion">motion ${c.motion_score}</span>
+          ${c.subtitles ? '<span class="pill subs">subtitles</span>' : ''}
           ${c.safety_boost ? '<span class="pill boost">safety boost</span>' : ''}
         </div>
         <div class="actions">

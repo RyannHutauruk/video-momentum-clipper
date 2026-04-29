@@ -141,6 +141,7 @@ def _process(
     n_clips: int,
     clip_len: float,
     safety_boost: bool = False,
+    subtitles: bool = False,
 ) -> None:
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
@@ -161,6 +162,19 @@ def _process(
             return
 
         job["moments"] = [m.to_dict() for m in moments]
+        _save_job(job_id, job)
+
+        all_phrases = []
+        if subtitles:
+            from subtitler import transcribe, group_words
+            job["status"] = "transcribing"
+            _save_job(job_id, job)
+            words = transcribe(str(src_path))
+            all_phrases = group_words(words)
+            job["transcript_words"] = len(words)
+            job["transcript_phrases"] = len(all_phrases)
+            _save_job(job_id, job)
+
         job["status"] = "clipping"
         job["clips"] = []
         _save_job(job_id, job)
@@ -176,9 +190,17 @@ def _process(
             cta = next((c for c in random.sample(CTAS, len(CTAS)) if c not in used_ctas), random.choice(CTAS))
             used_ctas.add(cta)
             out = clips_out / f"clip_{i:02d}.mp4"
+
+            clip_phrases = None
+            if subtitles and all_phrases:
+                from subtitler import slice_phrases
+                clip_phrases = slice_phrases(all_phrases, m.start, m.end)
+
             res = generate_clip(
                 str(src_path), str(out), m.start, m.end,
-                hook=hook, cta=cta, safety_boost=safety_boost,
+                hook=hook, cta=cta,
+                safety_boost=safety_boost,
+                subtitle_phrases=clip_phrases,
             )
             job["clips"].append({
                 "index": i,
@@ -192,6 +214,7 @@ def _process(
                 "audio_score": round(m.audio_score, 3),
                 "motion_score": round(m.motion_score, 3),
                 "safety_boost": res.safety_boost,
+                "subtitles": res.subtitles,
                 "url": f"/clips/{job_id}/{res.filename}",
             })
             _save_job(job_id, job)
@@ -235,6 +258,7 @@ def upload():
         clip_len = 25.0
 
     safety_boost = request.form.get("safety_boost", "").lower() in ("1", "true", "on", "yes")
+    subtitles = request.form.get("subtitles", "").lower() in ("1", "true", "on", "yes")
 
     job_id = _job_id()
     src_path = UPLOAD_DIR / f"{job_id}{ext}"
@@ -254,13 +278,14 @@ def upload():
         "n_clips": n_clips,
         "clip_len": clip_len,
         "safety_boost": safety_boost,
+        "subtitles": subtitles,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
 
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles),
         daemon=True,
     )
     t.start()
@@ -268,7 +293,7 @@ def upload():
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
 
 
-def _spawn_job(src_path: Path, n_clips: int, clip_len: float, safety_boost: bool, source_label: str, duration: float) -> str:
+def _spawn_job(src_path: Path, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float) -> str:
     job_id = src_path.stem
     job = {
         "job_id": job_id,
@@ -278,12 +303,13 @@ def _spawn_job(src_path: Path, n_clips: int, clip_len: float, safety_boost: bool
         "n_clips": n_clips,
         "clip_len": clip_len,
         "safety_boost": safety_boost,
+        "subtitles": subtitles,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles),
         daemon=True,
     )
     t.start()
@@ -312,6 +338,7 @@ def upload_url():
     except (ValueError, TypeError):
         clip_len = 25.0
     safety_boost = str(payload.get("safety_boost", "")).lower() in ("1", "true", "on", "yes")
+    subtitles = str(payload.get("subtitles", "")).lower() in ("1", "true", "on", "yes")
 
     job_id = _job_id()
     try:
@@ -325,7 +352,7 @@ def upload_url():
         src_path.unlink(missing_ok=True)
         return jsonify({"error": f"could not read video: {e}"}), 400
 
-    final_id = _spawn_job(src_path, n_clips, clip_len, safety_boost, src_path.name, duration)
+    final_id = _spawn_job(src_path, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration)
     return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 
