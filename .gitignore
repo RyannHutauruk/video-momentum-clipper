@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+backend/uploads/*
+backend/clips/*
+backend/jobs/*
+!backend/uploads/.gitkeep
+!backend/clips/.gitkeep
+!backend/jobs/.gitkeep
+samples/*.mp4
+.DS_Store
+*.log

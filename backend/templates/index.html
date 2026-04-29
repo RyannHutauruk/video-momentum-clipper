@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Momentum Clipper · Auto Shorts from Any Video</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+<header class="hero">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong>Momentum Clipper</strong>
+  </div>
+  <h1>Drop a video. Get monetizable Shorts.</h1>
+  <p class="sub">
+    No AI. Just smart audio &amp; motion analysis. We find the most exciting
+    moments, cut them to 9:16, add a hook, and pin a CTA — ready to upload to
+    YouTube Shorts, TikTok &amp; Reels.
+  </p>
+</header>
+
+<main>
+  <section class="uploader card">
+    <form id="upload-form">
+      <label class="drop" id="drop">
+        <input id="file" name="video" type="file" accept="video/*" hidden />
+        <div class="drop-inner">
+          <div class="drop-icon">⬆</div>
+          <div class="drop-title">Drop a video here, or click to choose</div>
+          <div class="drop-sub">MP4, MOV, MKV, WEBM · up to {{ max_mb }} MB</div>
+          <div class="filename" id="filename"></div>
+        </div>
+      </label>
+
+      <div class="controls">
+        <label>
+          Number of clips
+          <select name="n_clips" id="n_clips">
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+          </select>
+        </label>
+        <label>
+          Clip length
+          <select name="clip_len" id="clip_len">
+            <option value="15">15s</option>
+            <option value="20">20s</option>
+            <option value="25" selected>25s</option>
+            <option value="35">35s</option>
+            <option value="50">50s</option>
+          </select>
+        </label>
+        <button id="go" type="submit">Generate Shorts</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="status" class="card hidden">
+    <div class="status-row">
+      <div class="spinner"></div>
+      <div>
+        <div id="status-text">Uploading…</div>
+        <div class="muted small" id="status-sub"></div>
+      </div>
+    </div>
+    <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+  </section>
+
+  <section id="results" class="results hidden"></section>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <ol>
+      <li><strong>Audio peaks.</strong> We extract the audio and score every second by loudness — cheers, impacts, and hype rise to the top.</li>
+      <li><strong>Motion.</strong> OpenCV measures frame-to-frame change. Action-heavy moments get a boost.</li>
+      <li><strong>Pick &amp; cut.</strong> Top non-overlapping windows are exported as 1080×1920 H.264, with a bold hook caption (first 2.5s) and a CTA (last 2.5s).</li>
+    </ol>
+  </section>
+</main>
+
+<footer>
+  <span class="muted small">Built for short-form. No AI integrations — pure ffmpeg + OpenCV + numpy.</span>
+</footer>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
