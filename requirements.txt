@@ -2,3 +2,4 @@ flask>=3.0.0
 numpy>=1.26.0
 opencv-python-headless>=4.9.0
 gunicorn>=21.2.0
+yt-dlp>=2024.1.0

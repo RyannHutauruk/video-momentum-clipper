@@ -30,29 +30,44 @@ local and deterministic — no external AI APIs.
 
 ## Run locally
 
+You need `ffmpeg` and `ffprobe` on your `PATH`.
+
+- **macOS:** `brew install ffmpeg`
+- **Ubuntu/Debian:** `sudo apt-get install ffmpeg fonts-dejavu-core`
+- **Windows:** download static build from <https://www.gyan.dev/ffmpeg/builds/> and add to PATH.
+
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate           # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-cd backend
-python app.py
+python backend/app.py
 # Open http://localhost:8000
 ```
 
-You need `ffmpeg` and `ffprobe` on your `PATH`. On Ubuntu:
-
-```bash
-sudo apt-get install ffmpeg
-```
+Running locally has no upload size limit and no auth.
 
 ## Run with Docker
 
 ```bash
 docker build -t momentum-clipper .
-docker run --rm -p 8080:8080 momentum-clipper
-# Open http://localhost:8080
+docker run --rm -p 8000:8000 -e PORT=8000 momentum-clipper
+# Open http://localhost:8000
 ```
+
+To persist generated clips on the host:
+
+```bash
+docker run --rm -p 8000:8000 -e PORT=8000 \
+  -v "$(pwd)/data:/app/backend" \
+  momentum-clipper
+```
+
+## Features
+
+- Drag-drop file upload **or** "Paste URL" (Drive / Dropbox / direct .mp4 / yt-dlp-supported sites). The URL path bypasses any HTTP proxy upload limit.
+- Auto-compresses sources >120 MB to 720p H.264 before analyzing, so the pipeline stays fast.
+- Optional **"Boost monetization safety"** checkbox: applies a bundle of fingerprint-evading transforms to each clip (mirror, 110% zoom, color shift, +3% speed/pitch). Reduces automated Content-ID matches; does not legalize copyrighted material.
 
 ## How it works
 

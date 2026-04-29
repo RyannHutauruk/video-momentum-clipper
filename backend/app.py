@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import os
 import random
+import shlex
+import shutil
 import string
+import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import (
     Flask,
@@ -33,6 +37,9 @@ for d in (UPLOAD_DIR, CLIP_DIR, JOB_DIR):
 
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "500"))
+COMPRESS_THRESHOLD_MB = int(os.environ.get("COMPRESS_THRESHOLD_MB", "120"))
+COMPRESS_TARGET_HEIGHT = int(os.environ.get("COMPRESS_TARGET_HEIGHT", "720"))
+COMPRESS_TARGET_BITRATE = os.environ.get("COMPRESS_TARGET_BITRATE", "2000k")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -62,6 +69,70 @@ def _load_job(job_id: str) -> dict | None:
         return None
 
 
+def _maybe_compress(src_path: Path, job_id: str, job: dict) -> Path:
+    """If the source is bigger than COMPRESS_THRESHOLD_MB, transcode to a
+    smaller H.264/AAC mp4 (720p, 2 Mbps). Returns the path that should be fed
+    to the analyzer/clipper.
+    """
+    size_mb = src_path.stat().st_size / (1024 * 1024)
+    if size_mb < COMPRESS_THRESHOLD_MB:
+        return src_path
+
+    job["status"] = "compressing"
+    job["compress"] = {"input_mb": round(size_mb, 1)}
+    _save_job(job_id, job)
+
+    out = src_path.with_name(src_path.stem + "_compressed.mp4")
+    cmd = [
+        "ffmpeg", "-y", "-i", str(src_path),
+        "-vf", f"scale=-2:'min({COMPRESS_TARGET_HEIGHT},ih)'",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+        "-maxrate", COMPRESS_TARGET_BITRATE,
+        "-bufsize", "4000k",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+        "-movflags", "+faststart",
+        str(out),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"compression failed: {proc.stderr.decode('utf-8', errors='replace')[-1500:]}"
+        )
+    job["compress"]["output_mb"] = round(out.stat().st_size / (1024 * 1024), 1)
+    _save_job(job_id, job)
+    return out
+
+
+def _download_url(url: str, dest_dir: Path, job_id: str) -> Path:
+    """Download a video from a URL using yt-dlp.
+
+    Handles direct CDN/Drive/Dropbox/etc links plus video sites yt-dlp knows.
+    Returns the path of the downloaded file on disk.
+    """
+    out_template = str(dest_dir / f"{job_id}.%(ext)s")
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--no-warnings",
+        "--restrict-filenames",
+        "-f", "best[ext=mp4]/best",
+        "-o", out_template,
+        url,
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"yt-dlp failed for {url[:80]}:\n{err[-1500:]}"
+        )
+    matches = list(dest_dir.glob(f"{job_id}.*"))
+    matches = [p for p in matches if p.suffix.lower() in ALLOWED_EXT]
+    if not matches:
+        raise RuntimeError("download produced no playable file")
+    return matches[0]
+
+
 def _process(
     job_id: str,
     src_path: Path,
@@ -72,7 +143,10 @@ def _process(
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
     try:
+        src_path = _maybe_compress(src_path, job_id, job)
+
         job["status"] = "analyzing"
+        job["working_source"] = src_path.name
         _save_job(job_id, job)
 
         moments = find_best_moments(
@@ -190,6 +264,67 @@ def upload():
     t.start()
 
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
+
+
+def _spawn_job(src_path: Path, n_clips: int, clip_len: float, safety_boost: bool, source_label: str, duration: float) -> str:
+    job_id = src_path.stem
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "source": source_label,
+        "duration": round(duration, 2),
+        "n_clips": n_clips,
+        "clip_len": clip_len,
+        "safety_boost": safety_boost,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    _save_job(job_id, job)
+    t = threading.Thread(
+        target=_process,
+        args=(job_id, src_path, n_clips, clip_len, safety_boost),
+        daemon=True,
+    )
+    t.start()
+    return job_id
+
+
+@app.route("/api/upload_url", methods=["POST"])
+def upload_url():
+    """Pull a video from a remote URL (Drive/Dropbox/direct/etc) instead of
+    uploading raw bytes. Bypasses any tunnel body-size limit on the client side.
+    """
+    payload = request.get_json(silent=True) or request.form
+    url = (payload.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "no url"}), 400
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return jsonify({"error": "url must be http(s)"}), 400
+
+    try:
+        n_clips = max(1, min(8, int(payload.get("n_clips", 4))))
+    except (ValueError, TypeError):
+        n_clips = 4
+    try:
+        clip_len = max(8.0, min(60.0, float(payload.get("clip_len", 25))))
+    except (ValueError, TypeError):
+        clip_len = 25.0
+    safety_boost = str(payload.get("safety_boost", "")).lower() in ("1", "true", "on", "yes")
+
+    job_id = _job_id()
+    try:
+        src_path = _download_url(url, UPLOAD_DIR, job_id)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": f"download failed: {e}"}), 400
+
+    try:
+        duration = probe_duration(str(src_path))
+    except Exception as e:  # noqa: BLE001
+        src_path.unlink(missing_ok=True)
+        return jsonify({"error": f"could not read video: {e}"}), 400
+
+    final_id = _spawn_job(src_path, n_clips, clip_len, safety_boost, src_path.name, duration)
+    return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 
 @app.route("/api/jobs/<job_id>")

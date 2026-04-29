@@ -23,15 +23,30 @@
 <main>
   <section class="uploader card">
     <form id="upload-form">
-      <label class="drop" id="drop">
-        <input id="file" name="video" type="file" accept="video/*" hidden />
-        <div class="drop-inner">
-          <div class="drop-icon">⬆</div>
-          <div class="drop-title">Drop a video here, or click to choose</div>
-          <div class="drop-sub">MP4, MOV, MKV, WEBM · up to {{ max_mb }} MB</div>
-          <div class="filename" id="filename"></div>
-        </div>
-      </label>
+      <div class="tabs">
+        <button type="button" class="tab active" data-tab="file" id="tab-file">Upload file</button>
+        <button type="button" class="tab" data-tab="url" id="tab-url">Paste URL</button>
+      </div>
+
+      <div id="pane-file" class="pane">
+        <label class="drop" id="drop">
+          <input id="file" name="video" type="file" accept="video/*" hidden />
+          <div class="drop-inner">
+            <div class="drop-icon">⬆</div>
+            <div class="drop-title">Drop a video here, or click to choose</div>
+            <div class="drop-sub">MP4, MOV, MKV, WEBM · up to ~150 MB through the public URL (compress larger files locally)</div>
+            <div class="filename" id="filename"></div>
+          </div>
+        </label>
+      </div>
+
+      <div id="pane-url" class="pane hidden">
+        <label class="url-input">
+          <span class="url-label">Video URL</span>
+          <input type="url" id="url" name="url" placeholder="Google Drive / Dropbox / direct .mp4 / yt-dlp-supported link" />
+          <small class="muted">Server pulls the file directly — bypasses any upload size limit. Make sure the link allows public download.</small>
+        </label>
+      </div>
 
       <div class="controls">
         <label>

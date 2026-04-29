@@ -73,6 +73,41 @@ main {
 
 .uploader { padding: 24px; }
 
+.tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.tab {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 99px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tab.active {
+  background: var(--card-2);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.pane.hidden { display: none; }
+
+.url-input {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-2);
+  border: 2px dashed #303749;
+  border-radius: 14px;
+  padding: 24px;
+}
+.url-label { font-size: 13px; color: var(--muted); }
+.url-input input {
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  width: 100%;
+}
+
 .drop {
   display: block;
   border: 2px dashed #303749;
