@@ -183,6 +183,7 @@ main {
 .boost-text small { color: var(--muted); font-size: 12px; line-height: 1.4; }
 
 .pill.boost { color: var(--accent); }
+.pill.subs { color: #6ee7b7; }
 
 .hidden { display: none !important; }
 
