@@ -221,6 +221,7 @@ def _process(
     clip_len: float,
     safety_boost: bool = False,
     subtitles: bool = False,
+    face_track: bool = True,
 ) -> None:
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
@@ -275,11 +276,22 @@ def _process(
                 from subtitler import slice_phrases
                 clip_phrases = slice_phrases(all_phrases, m.start, m.end)
 
+            track = None
+            if face_track:
+                try:
+                    from face_tracker import track_face_xs
+                    track = track_face_xs(str(src_path), m.start, m.end)
+                except Exception:
+                    # Face tracking is best-effort — fall back silently to
+                    # center-crop on any failure (codec edge case, etc.).
+                    track = None
+
             res = generate_clip(
                 str(src_path), str(out), m.start, m.end,
                 hook=hook, cta=cta,
                 safety_boost=safety_boost,
                 subtitle_phrases=clip_phrases,
+                face_track=track,
             )
             job["clips"].append({
                 "index": i,
@@ -294,6 +306,7 @@ def _process(
                 "motion_score": round(m.motion_score, 3),
                 "safety_boost": res.safety_boost,
                 "subtitles": res.subtitles,
+                "face_track": res.face_track,
                 "url": f"/clips/{job_id}/{res.filename}",
             })
             _save_job(job_id, job)
@@ -339,6 +352,9 @@ def upload():
 
     safety_boost = request.form.get("safety_boost", "").lower() in ("1", "true", "on", "yes")
     subtitles = request.form.get("subtitles", "").lower() in ("1", "true", "on", "yes")
+    # Default ON — face tracking is the right default for podcast/interview
+    # sources, and falls back gracefully when no faces are detected.
+    face_track = request.form.get("face_track", "1").lower() in ("1", "true", "on", "yes")
     raw_goal = request.form.get("goal", "tiktok")
 
     job_id = _job_id()
@@ -368,13 +384,14 @@ def upload():
         "clip_len": clip_len,
         "safety_boost": safety_boost,
         "subtitles": subtitles,
+        "face_track": face_track,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
 
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track),
         daemon=True,
     )
     t.start()
@@ -382,7 +399,7 @@ def upload():
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
 
 
-def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float) -> str:
+def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float, face_track: bool = True) -> str:
     job_id = src_path.stem
     job = {
         "job_id": job_id,
@@ -394,12 +411,13 @@ def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_
         "clip_len": clip_len,
         "safety_boost": safety_boost,
         "subtitles": subtitles,
+        "face_track": face_track,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track),
         daemon=True,
     )
     t.start()
@@ -421,6 +439,7 @@ def upload_url():
 
     safety_boost = str(payload.get("safety_boost", "")).lower() in ("1", "true", "on", "yes")
     subtitles = str(payload.get("subtitles", "")).lower() in ("1", "true", "on", "yes")
+    face_track = str(payload.get("face_track", "1")).lower() in ("1", "true", "on", "yes")
     raw_goal = payload.get("goal") or "tiktok"
 
     job_id = _job_id()
@@ -440,7 +459,7 @@ def upload_url():
         payload.get("n_clips"), payload.get("clip_len"),
     )
 
-    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration)
+    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration, face_track=face_track)
     return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 

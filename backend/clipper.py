@@ -64,6 +64,7 @@ class ClipResult:
     end: float
     safety_boost: bool = False
     subtitles: bool = False
+    face_track: bool = False
 
 
 def _pick_font() -> str | None:
@@ -84,22 +85,42 @@ def build_video_filter(
     clip_len: float,
     safety_boost: bool = False,
     subtitle_file: str | None = None,
+    face_track: "FaceTrack | None" = None,
 ) -> str:
     """Build the ffmpeg -vf filter chain.
 
-    1. (boost) hflip — horizontal mirror
-    2. Scale + crop to 1080x1920 cover (with extra zoom when boost is on)
-    3. (boost) eq — subtle color grade
-    4. (subs) subtitles=path.ass — burnt-in word-grouped captions, BEFORE
+    1. (face) source-space crop following the speaker's x-center, OR
+       (no face) center-crop via scale-fit
+    2. (boost) hflip — horizontal mirror, applied AFTER the face crop so
+       the crop window is computed in unmirrored source coords
+    3. Scale to 1080x1920 (with extra zoom when boost is on)
+    4. (boost) eq — subtle color grade
+    5. (subs) subtitles=path.ass — burnt-in word-grouped captions, BEFORE
        any speed-up so timestamps stay in clip-relative time.
-    5. (boost) setpts — slight speed-up
-    6. drawtext hook (top, large) for first 2.5s of OUTPUT
-    7. drawtext cta (bottom) for last 2.5s of OUTPUT
+    6. (boost) setpts — slight speed-up
+    7. drawtext hook (top, large) for first 2.5s of OUTPUT
+    8. drawtext cta (bottom) for last 2.5s of OUTPUT
 
     Uses textfile= to avoid all the escaping pitfalls of inline text
     (apostrophes, colons, commas, etc).
     """
+    from face_tracker import crop_x_expr
+
     parts: list[str] = []
+
+    if face_track is not None and face_track.samples:
+        # Compute crop window in source pixels: 9:16 column at full source
+        # height (or full width if source is taller than 9:16).
+        sw, sh = face_track.source_w, face_track.source_h
+        crop_w = int(round(sh * 9 / 16))
+        if crop_w > sw:
+            # Portrait source — use full width, shrink height instead.
+            crop_w = sw
+            crop_h = int(round(sw * 16 / 9))
+        else:
+            crop_h = sh
+        x_expr = crop_x_expr(face_track, crop_w)
+        parts.append(f"crop={crop_w}:{crop_h}:'{x_expr}':0")
 
     if safety_boost:
         parts.append("hflip")
@@ -193,6 +214,7 @@ def generate_clip(
     cta: str | None = None,
     safety_boost: bool = False,
     subtitle_phrases: list | None = None,
+    face_track: "FaceTrack | None" = None,
 ) -> ClipResult:
     hook = hook or random.choice(HOOKS)
     cta = cta or random.choice(CTAS)
@@ -216,7 +238,8 @@ def generate_clip(
             write_ass(subtitle_phrases, subtitle_file)
 
         vf = build_video_filter(
-            hook_file, cta_file, clip_len, safety_boost, subtitle_file
+            hook_file, cta_file, clip_len, safety_boost, subtitle_file,
+            face_track=face_track,
         )
         af = build_audio_filter(safety_boost)
 
@@ -265,4 +288,5 @@ def generate_clip(
         end=end,
         safety_boost=safety_boost,
         subtitles=has_subs,
+        face_track=face_track is not None and bool(face_track.samples),
     )

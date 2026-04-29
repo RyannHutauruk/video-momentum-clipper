@@ -98,6 +98,7 @@ form.addEventListener("submit", async (e) => {
   const clipLen = document.getElementById("clip_len").value;
   const safety = document.getElementById("safety_boost").checked ? "1" : "0";
   const subs = document.getElementById("subtitles").checked ? "1" : "0";
+  const face = document.getElementById("face_track").checked ? "1" : "0";
 
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
@@ -114,7 +115,7 @@ form.addEventListener("submit", async (e) => {
       setStatus("Fetching from URL…", url.slice(0, 80), 10);
       result = await xhrPostJSON("/api/upload_url", {
         url, goal, n_clips: nClips, clip_len: clipLen,
-        safety_boost: safety, subtitles: subs,
+        safety_boost: safety, subtitles: subs, face_track: face,
       });
     } else {
       const f = fileInput.files[0];
@@ -126,6 +127,7 @@ form.addEventListener("submit", async (e) => {
       fd.append("clip_len", clipLen);
       fd.append("safety_boost", safety);
       fd.append("subtitles", subs);
+      fd.append("face_track", face);
 
       setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
       result = await xhrSendForm("/api/upload", fd);
