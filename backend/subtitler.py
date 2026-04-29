@@ -24,7 +24,10 @@ from dataclasses import dataclass
 # subtitles are disabled.
 _model = None
 _model_lock = threading.Lock()
-_model_name = os.environ.get("WHISPER_MODEL", "base")
+# `small` (~460 MB) roughly halves word-error-rate vs `base` for non-English
+# languages (esp. Indonesian) at ~2.5x the CPU time. Worth it; users expect
+# minute-long processing for clipping anyway.
+_model_name = os.environ.get("WHISPER_MODEL", "small")
 _model_compute = os.environ.get("WHISPER_COMPUTE", "int8")
 _model_device = os.environ.get("WHISPER_DEVICE", "cpu")
 
@@ -62,24 +65,31 @@ def transcribe(video_path: str, language: str | None = None) -> list[Word]:
 
     ``language`` is the ISO 639-1 code (``"en"``, ``"id"``, ...). ``None``
     auto-detects. VAD filter is on so silence stretches don't burn through
-    the model.
+    the model. Returns an empty list when the source has no audio stream
+    (e.g. some Pexels stock clips) so callers can skip subtitles silently
+    instead of crashing the job.
     """
     model = _load_model()
-    segments, _info = model.transcribe(
-        video_path,
-        language=language,
-        word_timestamps=True,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 400},
-    )
-    words: list[Word] = []
-    for seg in segments:
-        for w in (seg.words or []):
-            txt = (w.word or "").strip()
-            if not txt:
-                continue
-            words.append(Word(start=float(w.start), end=float(w.end), text=txt))
-    return words
+    try:
+        segments, _info = model.transcribe(
+            video_path,
+            language=language,
+            word_timestamps=True,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 400},
+        )
+        words: list[Word] = []
+        for seg in segments:
+            for w in (seg.words or []):
+                txt = (w.word or "").strip()
+                if not txt:
+                    continue
+                words.append(Word(start=float(w.start), end=float(w.end), text=txt))
+        return words
+    except IndexError:
+        # faster-whisper raises IndexError from its av-based audio decoder
+        # when the input has zero audio streams. Treat as "no transcript".
+        return []
 
 
 def group_words(

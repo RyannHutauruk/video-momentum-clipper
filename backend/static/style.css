@@ -373,6 +373,48 @@ main {
 }
 .addon-blurb { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .addon em { font-style: italic; color: var(--text); }
+.addon-blurb code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px; padding: 1px 5px; border-radius: 4px;
+  background: rgba(255,255,255,0.07); color: var(--text);
+}
+.addon-extras {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 8px; padding-top: 10px;
+  border-top: 1px dashed rgba(255,255,255,0.08);
+}
+.addon-field {
+  display: inline-flex; align-items: center; gap: 10px;
+}
+.addon-field-label {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.addon-field select {
+  appearance: none;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 28px 7px 12px;
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) center, calc(100% - 9px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.addon-field select:focus {
+  outline: none; border-color: var(--accent);
+}
+.addon-field-hint {
+  font-size: 11.5px; color: var(--muted); line-height: 1.5;
+}
+/* Stop the click on the select from also toggling the checkbox in the
+   surrounding <label>. */
+.addon-extras { pointer-events: auto; }
+.addon-extras select, .addon-extras label { cursor: pointer; }
 
 /* ─── Submit row ─────────────────────────────── */
 .submit-row {
