@@ -89,13 +89,30 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
+// Use XHR instead of fetch() so it works behind basic-auth tunnel URLs
+// (Chrome's fetch() refuses to resolve relative URLs against bases with creds).
+function xhrGetJSON(path) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", path);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch (e) { reject(new Error("invalid JSON")); }
+      } else {
+        reject(new Error(`HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.send();
+  });
+}
+
 async function pollJob(jobId) {
   let lastStatus = "";
   while (true) {
     await new Promise((r) => setTimeout(r, 1500));
-    const res = await fetch(`/api/jobs/${jobId}`);
-    if (!res.ok) throw new Error(`status ${res.status}`);
-    const job = await res.json();
+    const job = await xhrGetJSON(`/api/jobs/${jobId}`);
 
     if (job.status === "queued" && lastStatus !== "queued") {
       setStatus("Queued…", "", 35);
