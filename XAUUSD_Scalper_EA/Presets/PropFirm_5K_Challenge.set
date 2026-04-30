@@ -1,0 +1,77 @@
+; XAUUSD PropFirm Scalper EA
+; Preset: Prop Firm 5K Challenge (High Stakes)
+; Optimized for: 5K account, max loss $500, daily loss 5%
+;
+InpSymbol=XAUUSD
+InpTimeframe=5
+InpHTF=16385
+InpMagicNumber=20250430
+InpComment=PropScalper
+;
+; Risk Management - Conservative for prop firm
+InpRiskPercent=1.0
+InpMinLotSize=0.01
+InpMaxLotSize=10.0
+InpRRRatio=2.0
+InpMaxOpenTrades=1
+InpUsePartialClose=true
+InpPartialPercent=50.0
+;
+; Prop Firm Protection - Safety margin below limits
+InpUseDailyLimit=true
+InpDailyLossLimit=4.0
+InpUseTotalDD=true
+InpMaxTotalDD=8.0
+InpInitialBalance=5000.0
+InpTrailingEquity=true
+;
+; Trend Filter H1
+InpHTF_EMA_Period=50
+InpHTF_ADX_Period=14
+InpHTF_ADX_Min=20.0
+;
+; Entry Indicators M5
+InpFastEMA=9
+InpSlowEMA=21
+InpRSI_Period=14
+InpRSI_BuyZoneLow=35.0
+InpRSI_BuyZoneHigh=55.0
+InpRSI_SellZoneLow=45.0
+InpRSI_SellZoneHigh=65.0
+InpStoch_K=5
+InpStoch_D=3
+InpStoch_Slowing=3
+InpStoch_OB=80.0
+InpStoch_OS=20.0
+InpMACD_Fast=12
+InpMACD_Slow=26
+InpMACD_Signal=9
+;
+; SL/TP
+InpATR_Period=14
+InpATR_SL_Multi=1.5
+InpMinSL_Points=50
+InpMaxSL_Points=300
+;
+; Trailing Stop
+InpUseTrailing=true
+InpTrailActivation=1.0
+InpTrailStep=0.5
+;
+; Session Filter (GMT)
+InpUseSessionFilter=true
+InpLondonStart=8
+InpLondonEnd=12
+InpNYStart=13
+InpNYEnd=17
+InpGMTOffset=0
+;
+; Filters
+InpMaxSpread=50.0
+InpCooldownBars=3
+InpAvoidFriday=true
+InpAvoidMonday=true
+;
+; Candle Confirmation
+InpRequireCandle=true
+InpMinCandleBody=0.4
