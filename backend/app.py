@@ -126,6 +126,29 @@ def _normalize_language(raw: str | None) -> str | None:
     return None
 
 
+# Caption-rendering styles offered in the UI. ``classic`` is the original
+# phrase-at-a-time look. ``hype`` is Submagic-style per-word highlighting
+# (active word in yellow). ``hype_emoji`` adds keyword-driven emoji
+# decoration on top. Default is ``hype_emoji`` — that's the look modern
+# short-form platforms reward.
+CAPTION_STYLES: list[dict[str, str]] = [
+    {"code": "hype_emoji", "label": "Hype + Emoji (Submagic-style)"},
+    {"code": "hype", "label": "Hype (per-word highlight)"},
+    {"code": "classic", "label": "Classic (phrase, white)"},
+]
+_CAPTION_STYLE_CODES: set[str] = {x["code"] for x in CAPTION_STYLES}
+
+
+def _normalize_caption_style(raw: str | None) -> str:
+    """Validate caption_style form field. Defaults to ``hype_emoji``."""
+    if not raw:
+        return "hype_emoji"
+    code = str(raw).strip().lower()
+    if code in _CAPTION_STYLE_CODES:
+        return code
+    return "hype_emoji"
+
+
 def _resolve_goal(
     raw_goal: str | None,
     duration_s: float,
@@ -263,6 +286,7 @@ def _process(
     subtitles: bool = False,
     face_track: bool = True,
     language: str | None = None,
+    caption_style: str = "hype_emoji",
 ) -> None:
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
@@ -333,6 +357,7 @@ def _process(
                 safety_boost=safety_boost,
                 subtitle_phrases=clip_phrases,
                 face_track=track,
+                caption_style=caption_style,
             )
             job["clips"].append({
                 "index": i,
@@ -348,6 +373,7 @@ def _process(
                 "safety_boost": res.safety_boost,
                 "subtitles": res.subtitles,
                 "face_track": res.face_track,
+                "caption_style": res.caption_style,
                 "url": f"/clips/{job_id}/{res.filename}",
             })
             _save_job(job_id, job)
@@ -366,6 +392,7 @@ def index():
         "index.html",
         max_mb=MAX_UPLOAD_MB,
         languages=SUBTITLE_LANGUAGES,
+        caption_styles=CAPTION_STYLES,
     )
 
 
@@ -402,6 +429,7 @@ def upload():
     face_track = request.form.get("face_track", "1").lower() in ("1", "true", "on", "yes")
     raw_goal = request.form.get("goal", "tiktok")
     language = _normalize_language(request.form.get("language"))
+    caption_style = _normalize_caption_style(request.form.get("caption_style"))
 
     job_id = _job_id()
     src_path = UPLOAD_DIR / f"{job_id}{ext}"
@@ -432,13 +460,14 @@ def upload():
         "subtitles": subtitles,
         "face_track": face_track,
         "language": language,
+        "caption_style": caption_style,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
 
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language, caption_style),
         daemon=True,
     )
     t.start()
@@ -446,7 +475,7 @@ def upload():
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
 
 
-def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float, face_track: bool = True, language: str | None = None) -> str:
+def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float, face_track: bool = True, language: str | None = None, caption_style: str = "hype_emoji") -> str:
     job_id = src_path.stem
     job = {
         "job_id": job_id,
@@ -460,12 +489,13 @@ def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_
         "subtitles": subtitles,
         "face_track": face_track,
         "language": language,
+        "caption_style": caption_style,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language, caption_style),
         daemon=True,
     )
     t.start()
@@ -490,6 +520,7 @@ def upload_url():
     face_track = str(payload.get("face_track", "1")).lower() in ("1", "true", "on", "yes")
     raw_goal = payload.get("goal") or "tiktok"
     language = _normalize_language(payload.get("language"))
+    caption_style = _normalize_caption_style(payload.get("caption_style"))
 
     job_id = _job_id()
     try:
@@ -508,7 +539,7 @@ def upload_url():
         payload.get("n_clips"), payload.get("clip_len"),
     )
 
-    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration, face_track=face_track, language=language)
+    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration, face_track=face_track, language=language, caption_style=caption_style)
     return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 

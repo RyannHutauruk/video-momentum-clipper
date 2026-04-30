@@ -189,6 +189,15 @@
                 </select>
               </label>
               <span class="addon-field-hint">Picking the language explicitly is more accurate than Auto, especially for Indonesian.</span>
+              <label class="addon-field" for="caption_style">
+                <span class="addon-field-label">Caption style</span>
+                <select name="caption_style" id="caption_style">
+                  {% for cs in caption_styles %}
+                  <option value="{{ cs.code }}"{% if cs.code == 'hype_emoji' %} selected{% endif %}>{{ cs.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <span class="addon-field-hint">Hype highlights the active word in yellow. Hype + Emoji adds a keyword emoji per phrase.</span>
             </span>
           </span>
         </label>

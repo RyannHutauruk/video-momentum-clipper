@@ -65,6 +65,7 @@ class ClipResult:
     safety_boost: bool = False
     subtitles: bool = False
     face_track: bool = False
+    caption_style: str = "classic"
 
 
 def _pick_font() -> str | None:
@@ -280,6 +281,7 @@ def generate_clip(
     safety_boost: bool = False,
     subtitle_phrases: list | None = None,
     face_track: "FaceTrack | None" = None,
+    caption_style: str = "classic",
 ) -> ClipResult:
     hook = hook or random.choice(HOOKS)
     cta = cta or random.choice(CTAS)
@@ -306,7 +308,7 @@ def generate_clip(
         if has_subs:
             from subtitler import write_ass
             subtitle_file = os.path.join(tmp_dir, "subs.ass")
-            write_ass(subtitle_phrases, subtitle_file)
+            write_ass(subtitle_phrases, subtitle_file, style=caption_style)
 
         vf = build_video_filter(
             hook_files, cta_file, clip_len, safety_boost, subtitle_file,
@@ -361,4 +363,5 @@ def generate_clip(
         safety_boost=safety_boost,
         subtitles=has_subs,
         face_track=face_track is not None and bool(face_track.samples),
+        caption_style=caption_style if has_subs else "classic",
     )

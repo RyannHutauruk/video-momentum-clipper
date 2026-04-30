@@ -107,6 +107,7 @@ form.addEventListener("submit", async (e) => {
   const subs = document.getElementById("subtitles").checked ? "1" : "0";
   const face = document.getElementById("face_track").checked ? "1" : "0";
   const language = (document.getElementById("language") || { value: "auto" }).value;
+  const captionStyle = (document.getElementById("caption_style") || { value: "hype_emoji" }).value;
 
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
@@ -124,7 +125,7 @@ form.addEventListener("submit", async (e) => {
       result = await xhrPostJSON("/api/upload_url", {
         url, goal, n_clips: nClips, clip_len: clipLen,
         safety_boost: safety, subtitles: subs, face_track: face,
-        language,
+        language, caption_style: captionStyle,
       });
     } else {
       const f = fileInput.files[0];
@@ -138,6 +139,7 @@ form.addEventListener("submit", async (e) => {
       fd.append("subtitles", subs);
       fd.append("face_track", face);
       fd.append("language", language);
+      fd.append("caption_style", captionStyle);
 
       setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
       result = await xhrSendForm("/api/upload", fd);
