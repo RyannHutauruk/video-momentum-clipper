@@ -38,6 +38,13 @@ function switchTab(name) {
 tabFile.addEventListener("click", () => switchTab("file"));
 tabUrl.addEventListener("click", () => switchTab("url"));
 
+// The language <select> sits inside the subtitles <label>. Clicks on the
+// select would otherwise also toggle the subtitles checkbox, which is
+// confusing UX. Stop click propagation from the extras region.
+document.querySelectorAll(".addon-extras").forEach((el) => {
+  el.addEventListener("click", (e) => e.stopPropagation());
+});
+
 // Note: <label class="drop"> already opens the file picker on click.
 // Don't add a JS click handler here or it fires twice.
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
@@ -99,6 +106,7 @@ form.addEventListener("submit", async (e) => {
   const safety = document.getElementById("safety_boost").checked ? "1" : "0";
   const subs = document.getElementById("subtitles").checked ? "1" : "0";
   const face = document.getElementById("face_track").checked ? "1" : "0";
+  const language = (document.getElementById("language") || { value: "auto" }).value;
 
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
@@ -116,6 +124,7 @@ form.addEventListener("submit", async (e) => {
       result = await xhrPostJSON("/api/upload_url", {
         url, goal, n_clips: nClips, clip_len: clipLen,
         safety_boost: safety, subtitles: subs, face_track: face,
+        language,
       });
     } else {
       const f = fileInput.files[0];
@@ -128,6 +137,7 @@ form.addEventListener("submit", async (e) => {
       fd.append("safety_boost", safety);
       fd.append("subtitles", subs);
       fd.append("face_track", face);
+      fd.append("language", language);
 
       setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
       result = await xhrSendForm("/api/upload", fd);

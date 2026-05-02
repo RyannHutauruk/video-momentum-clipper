@@ -86,6 +86,46 @@ def _auto_count_for(duration_s: float, preset: dict) -> int:
     return max(preset["min_total"], min(preset["max_total"], n))
 
 
+# Languages we offer in the UI subtitle picker. Whisper supports ~100;
+# we ship the ones that cover the bulk of likely creator traffic +
+# Indonesian (the user's home market) explicitly. "auto" = let Whisper
+# detect.
+SUBTITLE_LANGUAGES: list[dict[str, str]] = [
+    {"code": "auto", "label": "Auto-detect"},
+    {"code": "en", "label": "English"},
+    {"code": "id", "label": "Indonesian"},
+    {"code": "ms", "label": "Malay"},
+    {"code": "es", "label": "Spanish"},
+    {"code": "pt", "label": "Portuguese"},
+    {"code": "fr", "label": "French"},
+    {"code": "de", "label": "German"},
+    {"code": "it", "label": "Italian"},
+    {"code": "ja", "label": "Japanese"},
+    {"code": "ko", "label": "Korean"},
+    {"code": "zh", "label": "Chinese"},
+    {"code": "ar", "label": "Arabic"},
+    {"code": "hi", "label": "Hindi"},
+    {"code": "ru", "label": "Russian"},
+    {"code": "tr", "label": "Turkish"},
+    {"code": "vi", "label": "Vietnamese"},
+    {"code": "th", "label": "Thai"},
+]
+_SUBTITLE_CODES: set[str] = {x["code"] for x in SUBTITLE_LANGUAGES if x["code"] != "auto"}
+
+
+def _normalize_language(raw: str | None) -> str | None:
+    """Validate the language form field. Returns an ISO 639-1 code (lowercase)
+    that Whisper understands, or None to mean auto-detect."""
+    if not raw:
+        return None
+    code = str(raw).strip().lower()
+    if code in ("auto", "", "none"):
+        return None
+    if code in _SUBTITLE_CODES:
+        return code
+    return None
+
+
 def _resolve_goal(
     raw_goal: str | None,
     duration_s: float,
@@ -222,6 +262,7 @@ def _process(
     safety_boost: bool = False,
     subtitles: bool = False,
     face_track: bool = True,
+    language: str | None = None,
 ) -> None:
     """Background worker: analyze + generate clips, update job status."""
     job = _load_job(job_id) or {}
@@ -249,7 +290,7 @@ def _process(
             from subtitler import transcribe, group_words
             job["status"] = "transcribing"
             _save_job(job_id, job)
-            words = transcribe(str(src_path))
+            words = transcribe(str(src_path), language=language)
             all_phrases = group_words(words)
             job["transcript_words"] = len(words)
             job["transcript_phrases"] = len(all_phrases)
@@ -321,7 +362,11 @@ def _process(
 
 @app.route("/")
 def index():
-    return render_template("index.html", max_mb=MAX_UPLOAD_MB)
+    return render_template(
+        "index.html",
+        max_mb=MAX_UPLOAD_MB,
+        languages=SUBTITLE_LANGUAGES,
+    )
 
 
 @app.route("/api/health")
@@ -356,6 +401,7 @@ def upload():
     # sources, and falls back gracefully when no faces are detected.
     face_track = request.form.get("face_track", "1").lower() in ("1", "true", "on", "yes")
     raw_goal = request.form.get("goal", "tiktok")
+    language = _normalize_language(request.form.get("language"))
 
     job_id = _job_id()
     src_path = UPLOAD_DIR / f"{job_id}{ext}"
@@ -385,13 +431,14 @@ def upload():
         "safety_boost": safety_boost,
         "subtitles": subtitles,
         "face_track": face_track,
+        "language": language,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
 
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language),
         daemon=True,
     )
     t.start()
@@ -399,7 +446,7 @@ def upload():
     return jsonify({"job_id": job_id, "status_url": url_for("job_status", job_id=job_id)})
 
 
-def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float, face_track: bool = True) -> str:
+def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_boost: bool, subtitles: bool, source_label: str, duration: float, face_track: bool = True, language: str | None = None) -> str:
     job_id = src_path.stem
     job = {
         "job_id": job_id,
@@ -412,12 +459,13 @@ def _spawn_job(src_path: Path, goal: str, n_clips: int, clip_len: float, safety_
         "safety_boost": safety_boost,
         "subtitles": subtitles,
         "face_track": face_track,
+        "language": language,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     _save_job(job_id, job)
     t = threading.Thread(
         target=_process,
-        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track),
+        args=(job_id, src_path, n_clips, clip_len, safety_boost, subtitles, face_track, language),
         daemon=True,
     )
     t.start()
@@ -441,6 +489,7 @@ def upload_url():
     subtitles = str(payload.get("subtitles", "")).lower() in ("1", "true", "on", "yes")
     face_track = str(payload.get("face_track", "1")).lower() in ("1", "true", "on", "yes")
     raw_goal = payload.get("goal") or "tiktok"
+    language = _normalize_language(payload.get("language"))
 
     job_id = _job_id()
     try:
@@ -459,7 +508,7 @@ def upload_url():
         payload.get("n_clips"), payload.get("clip_len"),
     )
 
-    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration, face_track=face_track)
+    final_id = _spawn_job(src_path, goal, n_clips, clip_len, safety_boost, subtitles, src_path.name, duration, face_track=face_track, language=language)
     return jsonify({"job_id": final_id, "status_url": url_for("job_status", job_id=final_id)})
 
 

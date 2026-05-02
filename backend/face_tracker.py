@@ -141,6 +141,15 @@ def track_face_xs(
         cap.release()
 
 
+# Hard cap on how many keypoints we encode into the ffmpeg crop expression.
+# Each keypoint adds one nested ``if(lt(t,...),...)`` level; ffmpeg's expression
+# parser starts choking somewhere past ~80 levels of nesting (the actual limit
+# is build-dependent — we hit "Failed to configure input pad" / "Error
+# reinitializing filters" on a 70 s clip with 140 keypoints). 32 is plenty for
+# a slowly-moving talking head and gives us headroom on every codec build.
+_MAX_CROP_KEYPOINTS = 32
+
+
 def crop_x_expr(
     track: FaceTrack,
     crop_w: int,
@@ -152,9 +161,9 @@ def crop_x_expr(
     expression evaluates to a top-left x-coordinate clamped so the crop
     window always stays inside the frame.
 
-    With 22s × 2 Hz = ~45 keypoints the resulting expression is ~2 KB —
-    well under any ffmpeg filter limit. Each keypoint contributes a
-    ``if(lt(t, t_k), x_k, ...)`` nest.
+    Long clips can produce hundreds of face samples; we decimate down to
+    ``_MAX_CROP_KEYPOINTS`` before emitting the nested ``if(lt(...))`` chain
+    so the expression stays inside ffmpeg's parser depth limit.
     """
     src_w = track.source_w
     max_left = max(0, src_w - crop_w)
@@ -168,12 +177,25 @@ def crop_x_expr(
     if not track.samples:
         return str(max_left // 2)
 
+    # Decimate uniformly so we never exceed the parser depth limit on long
+    # clips (e.g. 70 s × 2 Hz = 140 samples). We always keep the last sample
+    # so the trailing fallback represents the end of the clip.
+    samples = track.samples
+    n = len(samples)
+    if n > _MAX_CROP_KEYPOINTS:
+        stride = n / float(_MAX_CROP_KEYPOINTS)
+        idxs = [int(round(i * stride)) for i in range(_MAX_CROP_KEYPOINTS)]
+        idxs = sorted(set(min(n - 1, i) for i in idxs))
+        if idxs[-1] != n - 1:
+            idxs.append(n - 1)
+        samples = [samples[i] for i in idxs]
+
     # Build nested if() from end backwards so the cheapest branch fires first.
     # The final fallback is the last sample's x — guarantees the expression
     # is total over t.
-    last_x = left_for(track.samples[-1][1])
+    last_x = left_for(samples[-1][1])
     expr = str(last_x)
-    for tt, x_norm in reversed(track.samples[:-1]):
+    for tt, x_norm in reversed(samples[:-1]):
         x_pix = left_for(x_norm)
         expr = f"if(lt(t\\,{tt:.3f})\\,{x_pix}\\,{expr})"
     return expr

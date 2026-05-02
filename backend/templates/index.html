@@ -178,7 +178,18 @@
               Auto-subtitles
               <span class="recommended">RECOMMENDED</span>
             </span>
-            <span class="addon-blurb">Word-grouped TikTok/Reels-style captions, burnt in. Local Whisper — no API, no cost. Adds ~0.5–1× source duration to processing.</span>
+            <span class="addon-blurb">Word-grouped TikTok/Reels-style captions, burnt in. Local Whisper <code>small</code> — no API, no cost. Adds ~1–2× source duration to processing.</span>
+            <span class="addon-extras">
+              <label class="addon-field" for="language">
+                <span class="addon-field-label">Language</span>
+                <select name="language" id="language">
+                  {% for lang in languages %}
+                  <option value="{{ lang.code }}"{% if lang.code == 'auto' %} selected{% endif %}>{{ lang.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <span class="addon-field-hint">Picking the language explicitly is more accurate than Auto, especially for Indonesian.</span>
+            </span>
           </span>
         </label>
 
