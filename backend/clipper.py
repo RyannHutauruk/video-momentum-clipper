@@ -64,6 +64,7 @@ class ClipResult:
     end: float
     safety_boost: bool = False
     subtitles: bool = False
+    face_track: bool = False
 
 
 def _pick_font() -> str | None:
@@ -78,28 +79,106 @@ def _pick_font() -> str | None:
     return None
 
 
+# Approximate width of a bold sans-serif glyph at fontsize 1, in pixels.
+# DejaVuSans-Bold averages ~0.58 of the fontsize in width; use the upper end
+# so we never overestimate the budget and overflow.
+_AVG_GLYPH_WIDTH = 0.60
+
+# Pixels of side padding we want to keep clear of the canvas edge for the
+# hook caption box (the box has its own boxborderw on top of this).
+_HOOK_SIDE_MARGIN = 80
+
+# Output canvas width.
+_OUT_W = 1080
+
+
+def _wrap_caption(text: str, max_chars_per_line: int, max_lines: int = 2) -> list[str]:
+    """Greedy word-wrap into at most ``max_lines`` lines of at most
+    ``max_chars_per_line`` chars. If a single word is longer than the line
+    budget, it goes on its own line as-is (we'd rather render a slightly
+    wider single line than break a word mid-glyph)."""
+    words = text.split()
+    if not words:
+        return [""]
+    lines: list[list[str]] = [[]]
+    for w in words:
+        candidate_len = len(" ".join(lines[-1] + [w]))
+        if lines[-1] and candidate_len > max_chars_per_line and len(lines) < max_lines:
+            lines.append([w])
+        else:
+            lines[-1].append(w)
+    return [" ".join(line) for line in lines]
+
+
+def _hook_layout(hook: str, max_fontsize: int = 84, min_fontsize: int = 56) -> tuple[list[str], int]:
+    """Pick wrapped lines + fontsize for the hook so it fits the canvas.
+
+    Strategy: try wrapping into 1 line, then 2 lines. For each candidate,
+    compute the largest fontsize that keeps the longest line within the
+    horizontal budget. Pick the option with the bigger fontsize."""
+    upper = hook.upper()
+    budget_px = _OUT_W - 2 * _HOOK_SIDE_MARGIN
+
+    best_lines: list[str] = [upper]
+    best_size: int = min_fontsize
+
+    for max_lines in (1, 2):
+        # Approximate chars-per-line that the budget can hold at max_fontsize.
+        max_chars = max(8, int(budget_px / (max_fontsize * _AVG_GLYPH_WIDTH)))
+        wrapped = _wrap_caption(upper, max_chars_per_line=max_chars, max_lines=max_lines)
+        longest = max(len(line) for line in wrapped) or 1
+        # Fontsize that fits the longest line in the budget.
+        size = int(budget_px / (longest * _AVG_GLYPH_WIDTH))
+        size = max(min_fontsize, min(max_fontsize, size))
+        if size > best_size:
+            best_size = size
+            best_lines = wrapped
+    return best_lines, best_size
+
+
 def build_video_filter(
-    hook_file: str,
+    hook_files: list[str],
     cta_file: str,
     clip_len: float,
     safety_boost: bool = False,
     subtitle_file: str | None = None,
+    face_track: "FaceTrack | None" = None,
+    hook_fontsize: int = 84,
 ) -> str:
     """Build the ffmpeg -vf filter chain.
 
-    1. (boost) hflip — horizontal mirror
-    2. Scale + crop to 1080x1920 cover (with extra zoom when boost is on)
-    3. (boost) eq — subtle color grade
-    4. (subs) subtitles=path.ass — burnt-in word-grouped captions, BEFORE
+    1. (face) source-space crop following the speaker's x-center, OR
+       (no face) center-crop via scale-fit
+    2. (boost) hflip — horizontal mirror, applied AFTER the face crop so
+       the crop window is computed in unmirrored source coords
+    3. Scale to 1080x1920 (with extra zoom when boost is on)
+    4. (boost) eq — subtle color grade
+    5. (subs) subtitles=path.ass — burnt-in word-grouped captions, BEFORE
        any speed-up so timestamps stay in clip-relative time.
-    5. (boost) setpts — slight speed-up
-    6. drawtext hook (top, large) for first 2.5s of OUTPUT
-    7. drawtext cta (bottom) for last 2.5s of OUTPUT
+    6. (boost) setpts — slight speed-up
+    7. drawtext hook (top, large) for first 2.5s of OUTPUT
+    8. drawtext cta (bottom) for last 2.5s of OUTPUT
 
     Uses textfile= to avoid all the escaping pitfalls of inline text
     (apostrophes, colons, commas, etc).
     """
+    from face_tracker import crop_x_expr
+
     parts: list[str] = []
+
+    if face_track is not None and face_track.samples:
+        # Compute crop window in source pixels: 9:16 column at full source
+        # height (or full width if source is taller than 9:16).
+        sw, sh = face_track.source_w, face_track.source_h
+        crop_w = int(round(sh * 9 / 16))
+        if crop_w > sw:
+            # Portrait source — use full width, shrink height instead.
+            crop_w = sw
+            crop_h = int(round(sw * 16 / 9))
+        else:
+            crop_h = sh
+        x_expr = crop_x_expr(face_track, crop_w)
+        parts.append(f"crop={crop_w}:{crop_h}:'{x_expr}':0")
 
     if safety_boost:
         parts.append("hflip")
@@ -145,14 +224,22 @@ def build_video_filter(
     font_file = _pick_font()
     font_arg = f":fontfile={font_file}" if font_file else ""
 
-    hook_draw = (
-        f"drawtext=textfile={hook_file}"
-        f"{font_arg}"
-        f":fontcolor=white:fontsize=84:borderw=6:bordercolor=black"
-        f":box=1:boxcolor=black@0.45:boxborderw=20"
-        f":x=(w-text_w)/2:y=240"
-        f":enable='between(t\\,0\\,{hook_end:.3f})'"
-    )
+    # Hook may be split across multiple lines; render each as its own
+    # individually-centered drawtext, stacked vertically. ffmpeg 4.4 doesn't
+    # support text_align, so this is the cleanest way to get true centered
+    # multi-line text.
+    line_height = int(hook_fontsize * 1.25)
+    base_y = 240
+    for i, hf in enumerate(hook_files):
+        y = base_y + i * line_height
+        parts.append(
+            f"drawtext=textfile={hf}"
+            f"{font_arg}"
+            f":fontcolor=white:fontsize={hook_fontsize}:borderw=6:bordercolor=black"
+            f":box=1:boxcolor=black@0.45:boxborderw=20"
+            f":x=(w-text_w)/2:y={y}"
+            f":enable='between(t\\,0\\,{hook_end:.3f})'"
+        )
 
     cta_draw = (
         f"drawtext=textfile={cta_file}"
@@ -163,7 +250,6 @@ def build_video_filter(
         f":enable='between(t\\,{cta_start:.3f}\\,{out_len:.3f})'"
     )
 
-    parts.append(hook_draw)
     parts.append(cta_draw)
     return ",".join(parts)
 
@@ -193,20 +279,27 @@ def generate_clip(
     cta: str | None = None,
     safety_boost: bool = False,
     subtitle_phrases: list | None = None,
+    face_track: "FaceTrack | None" = None,
 ) -> ClipResult:
     hook = hook or random.choice(HOOKS)
     cta = cta or random.choice(CTAS)
     clip_len = max(1.0, end - start)
 
     # Write hook + cta to temp files; drawtext's textfile= avoids escape hell.
+    # Hook gets word-wrapped + sized so it never overflows the 1080-wide canvas;
+    # each wrapped line is its own file so we can center-align line-by-line.
     tmp_dir = tempfile.mkdtemp(prefix="momclip_")
-    hook_file = os.path.join(tmp_dir, "hook.txt")
+    hook_lines, hook_fontsize = _hook_layout(hook)
+    hook_files: list[str] = []
+    for i, line in enumerate(hook_lines):
+        path = os.path.join(tmp_dir, f"hook_{i}.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(line)
+        hook_files.append(path)
     cta_file = os.path.join(tmp_dir, "cta.txt")
     subtitle_file: str | None = None
     has_subs = bool(subtitle_phrases)
     try:
-        with open(hook_file, "w", encoding="utf-8") as f:
-            f.write(hook.upper())
         with open(cta_file, "w", encoding="utf-8") as f:
             f.write(cta)
 
@@ -216,7 +309,8 @@ def generate_clip(
             write_ass(subtitle_phrases, subtitle_file)
 
         vf = build_video_filter(
-            hook_file, cta_file, clip_len, safety_boost, subtitle_file
+            hook_files, cta_file, clip_len, safety_boost, subtitle_file,
+            face_track=face_track, hook_fontsize=hook_fontsize,
         )
         af = build_audio_filter(safety_boost)
 
@@ -244,7 +338,8 @@ def generate_clip(
                 f"stderr: {proc.stderr.decode('utf-8', errors='replace')[-2000:]}"
             )
     finally:
-        for p in (hook_file, cta_file, subtitle_file):
+        cleanup = list(hook_files) + [cta_file, subtitle_file]
+        for p in cleanup:
             if not p:
                 continue
             try:
@@ -265,4 +360,5 @@ def generate_clip(
         end=end,
         safety_boost=safety_boost,
         subtitles=has_subs,
+        face_track=face_track is not None and bool(face_track.samples),
     )
