@@ -62,13 +62,27 @@ def track_face_xs(
     start: float,
     end: float,
     sample_hz: float = 2.0,
-    ema_alpha: float = 0.35,
+    ema_alpha: float = 0.12,
+    deadzone_norm: float = 0.025,
+    max_step_norm: float = 0.012,
 ) -> FaceTrack | None:
     """Return a smoothed face-x curve for a clip range, or ``None``.
 
     Returns ``None`` if the source is unreadable, or if not a single face
     was detected across the clip — in those cases the caller should
     centre-crop.
+
+    Smoothing is intentionally lazy:
+
+    - ``ema_alpha`` is small (0.12) so the crop window only drifts slowly
+      toward the detected face — micro-movements don't move the camera.
+    - ``deadzone_norm`` is the fraction of source width that the smoothed
+      target must shift before the *output* center is even allowed to move.
+      Below that, we hold position. Cuts the "always wiggling" feel.
+    - ``max_step_norm`` clamps how far the output center can move per
+      sample (~1.2% of source width per 0.5 s, i.e. ~25 px on 1080-wide
+      source per second). Keeps the camera from snapping when the face
+      jumps frame-to-frame.
     """
     cap = cv2.VideoCapture(src)
     if not cap.isOpened():
@@ -129,12 +143,25 @@ def track_face_xs(
                 filled.append((tt, x))
                 last = x
 
-        # EMA smooth so the crop window doesn't twitch on micro-movements.
+        # Two-stage smoothing:
+        #   1. EMA on the *target* (where the face is now), low alpha so
+        #      the target drifts slowly toward the face.
+        #   2. Dead-zone + rate-limit on the *output* (what we actually
+        #      hand to ffmpeg's crop expression). The output only chases
+        #      the EMA target when it has moved more than ``deadzone_norm``,
+        #      and even then never faster than ``max_step_norm`` per sample.
+        # Net result: the camera holds still through micro-movements and
+        # nudges, only swings to follow real position changes.
         smoothed: list[tuple[float, float]] = []
         ema = filled[0][1]
+        out = filled[0][1]
         for tt, x in filled:
             ema = ema * (1 - ema_alpha) + x * ema_alpha
-            smoothed.append((tt, ema))
+            delta = ema - out
+            if abs(delta) > deadzone_norm:
+                step = max(-max_step_norm, min(max_step_norm, delta))
+                out += step
+            smoothed.append((tt, out))
 
         return FaceTrack(samples=smoothed, source_w=src_w, source_h=src_h)
     finally:

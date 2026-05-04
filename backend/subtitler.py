@@ -99,7 +99,7 @@ def transcribe(video_path: str, language: str | None = None) -> list[Word]:
 def group_words(
     words: list[Word],
     max_words: int = 3,
-    max_chars: int = 22,
+    max_chars: int = 18,
     max_gap: float = 0.5,
 ) -> list[Phrase]:
     """Group adjacent words into short on-screen phrases.
@@ -240,16 +240,20 @@ def write_ass(
     if style not in CAPTION_STYLES:
         style = "classic"
 
+    # WrapStyle 0 = smart wrap, balance line lengths; libass will break on
+    # spaces if a single line would exceed the play area minus MarginL/R.
+    # MarginL/R = 100 each leaves an 880-px text budget at 1080 wide so
+    # captions never kiss the edge or fall off-screen on narrow word-spacing.
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {play_w}
 PlayResY: {play_h}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,{margin_v},1
+Style: Cap,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,100,100,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

@@ -188,12 +188,14 @@ def build_video_filter(
         zoom_w = int(round(1080 * SAFETY_ZOOM))
         zoom_h = int(round(1920 * SAFETY_ZOOM))
         parts.append(
-            f"scale=w={zoom_w}:h={zoom_h}:force_original_aspect_ratio=increase"
+            # ``flags=lanczos`` gives a sharper scale than the bilinear default,
+            # noticeable on talking-head sources upscaled from <1080 wide.
+            f"scale=w={zoom_w}:h={zoom_h}:force_original_aspect_ratio=increase:flags=lanczos"
         )
         parts.append("crop=1080:1920")
     else:
         parts.append(
-            "scale=w=1080:h=1920:force_original_aspect_ratio=increase"
+            "scale=w=1080:h=1920:force_original_aspect_ratio=increase:flags=lanczos"
         )
         parts.append("crop=1080:1920")
 
@@ -326,9 +328,15 @@ def generate_clip(
         if af:
             cmd += ["-af", af]
         cmd += [
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            # 'medium' preset + crf=19 is the visible-quality breakpoint:
+            # output looks as sharp as CapCut/OpusClip on talking-head
+            # sources (we previously shipped veryfast/crf=23 which softened
+            # text edges and skin detail). We also pin profile=high and
+            # level=4.0 so every modern phone decodes cleanly.
+            "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+            "-profile:v", "high", "-level", "4.0",
             "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
             "-movflags", "+faststart",
             out_path,
         ]
