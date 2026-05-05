@@ -44,6 +44,10 @@ class Phrase:
     start: float
     end: float
     text: str
+    # Word-level timings that make up this phrase. Populated by ``group_words``
+    # and ``slice_phrases`` so downstream renderers can do per-word highlighting
+    # (Submagic-style) without re-running Whisper.
+    words: list["Word"] | None = None
 
 
 def _load_model():
@@ -95,7 +99,7 @@ def transcribe(video_path: str, language: str | None = None) -> list[Word]:
 def group_words(
     words: list[Word],
     max_words: int = 3,
-    max_chars: int = 22,
+    max_chars: int = 18,
     max_gap: float = 0.5,
 ) -> list[Phrase]:
     """Group adjacent words into short on-screen phrases.
@@ -131,6 +135,7 @@ def _finalize(words: list[Word]) -> Phrase:
         start=words[0].start,
         end=words[-1].end,
         text=" ".join(w.text for w in words),
+        words=list(words),
     )
 
 
@@ -140,16 +145,33 @@ def slice_phrases(
     end: float,
     pad: float = 0.05,
 ) -> list[Phrase]:
-    """Filter phrases within [start, end] and rebase their times to start at 0."""
+    """Filter phrases within [start, end] and rebase their times to start at 0.
+
+    Word-level timings inside each phrase are rebased too so per-word
+    highlighting renders against the same clip-relative clock as the phrase
+    itself.
+    """
     out: list[Phrase] = []
+    clip_len = max(0.0, end - start)
     for p in phrases:
         if p.end < start - pad or p.start > end + pad:
             continue
         s = max(0.0, p.start - start)
-        e = min(end - start, p.end - start)
+        e = min(clip_len, p.end - start)
         if e <= s:
             continue
-        out.append(Phrase(start=s, end=e, text=p.text))
+        rebased_words: list[Word] | None = None
+        if p.words:
+            rebased_words = []
+            for w in p.words:
+                ws = max(0.0, w.start - start)
+                we = min(clip_len, w.end - start)
+                if we <= ws:
+                    continue
+                rebased_words.append(Word(start=ws, end=we, text=w.text))
+            if not rebased_words:
+                rebased_words = None
+        out.append(Phrase(start=s, end=e, text=p.text, words=rebased_words))
     return out
 
 
@@ -178,6 +200,15 @@ def _ass_escape(text: str) -> str:
     )
 
 
+# ASS colors are ``&HBBGGRR&`` (BGR, not RGB). Declared as string constants
+# here so we don't accidentally swap bytes in the renderer.
+_ASS_WHITE = r"\c&HFFFFFF&"
+_ASS_YELLOW = r"\c&H00FFFF&"  # #FFFF00 in RGB
+
+
+CAPTION_STYLES = ("classic", "hype", "hype_emoji")
+
+
 def write_ass(
     phrases: list[Phrase],
     out_path: str,
@@ -186,32 +217,97 @@ def write_ass(
     font_name: str = "DejaVu Sans",
     font_size: int = 84,
     margin_v: int = 540,
+    style: str = "classic",
 ) -> None:
     """Write an ASS subtitle file for a single clip.
 
+    Three styles:
+
+    ``classic``
+        One dialogue line per phrase, all white. Original look.
+    ``hype``
+        Submagic-style per-word highlighting: one dialogue event per word,
+        the active word in yellow, others in white. Requires ``phrase.words``
+        to be populated (Whisper word-timestamps) — falls back to ``classic``
+        for any phrase without word timings.
+    ``hype_emoji``
+        Same as ``hype`` plus one emoji appended next to the highest-signal
+        keyword in each phrase. Emoji is persistent for the phrase duration.
+
     Captions are bold white with a thick black outline, centered horizontally
-    and lifted ~28% from the bottom so phone UI doesn't clip them. Style is
-    chosen to evoke TikTok/Reels/Shorts captions.
+    and lifted ~28% from the bottom so phone UI doesn't clip them.
     """
+    if style not in CAPTION_STYLES:
+        style = "classic"
+
+    # WrapStyle 0 = smart wrap, balance line lengths; libass will break on
+    # spaces if a single line would exceed the play area minus MarginL/R.
+    # MarginL/R = 100 each leaves an 880-px text budget at 1080 wide so
+    # captions never kiss the edge or fall off-screen on narrow word-spacing.
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {play_w}
 PlayResY: {play_h}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,{margin_v},1
+Style: Cap,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,100,100,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
     for p in phrases:
-        text = _ass_escape(p.text.upper())
-        lines.append(
-            f"Dialogue: 0,{_ts_ass(p.start)},{_ts_ass(p.end)},Cap,,0,0,0,,{text}\n"
-        )
+        lines.extend(_render_phrase(p, style))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("".join(lines))
+
+
+def _render_phrase(p: Phrase, style: str) -> list[str]:
+    """Render one phrase into one or more ASS Dialogue lines."""
+    words = p.words or []
+    # If we don't have word-level timings we can't do per-word highlighting;
+    # fall back to the flat classic render.
+    if style == "classic" or not words:
+        text = _ass_escape(p.text.upper())
+        return [
+            f"Dialogue: 0,{_ts_ass(p.start)},{_ts_ass(p.end)},Cap,,0,0,0,,{text}\n"
+        ]
+
+    # Hype / hype_emoji: per-word. Pick an emoji (hype_emoji only) that will
+    # be appended to its matched word for the whole phrase duration.
+    emoji_idx: int | None = None
+    emoji_char: str | None = None
+    if style == "hype_emoji":
+        from emojis import pick_phrase_emoji
+        pick = pick_phrase_emoji([w.text for w in words])
+        if pick is not None:
+            emoji_idx, emoji_char = pick
+
+    rendered_tokens: list[str] = []
+    for i, w in enumerate(words):
+        tok = w.text.upper()
+        if emoji_char and i == emoji_idx:
+            tok = f"{tok} {emoji_char}"
+        rendered_tokens.append(tok)
+
+    out: list[str] = []
+    for active in range(len(words)):
+        parts: list[str] = []
+        for i, tok in enumerate(rendered_tokens):
+            color = _ASS_YELLOW if i == active else _ASS_WHITE
+            parts.append("{" + color + "}" + _ass_escape(tok))
+        text = " ".join(parts)
+        ws = words[active].start
+        we = words[active].end
+        # Extend the last word to the phrase end so the caption doesn't pop
+        # off a beat early when Whisper clips the trailing word timestamp
+        # tightly.
+        if active == len(words) - 1:
+            we = max(we, p.end)
+        out.append(
+            f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},Cap,,0,0,0,,{text}\n"
+        )
+    return out

@@ -68,6 +68,7 @@ function onFileChosen() {
 function setStatus(text, sub = "", pct = null) {
   statusEl.classList.remove("hidden");
   statusEl.classList.remove("is-error");
+  statusEl.classList.remove("is-done");
   statusText.textContent = text;
   statusSub.textContent = sub;
   if (pct !== null) barFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
@@ -75,25 +76,38 @@ function setStatus(text, sub = "", pct = null) {
 
 function showError(msg, hint = "") {
   statusEl.classList.remove("hidden");
+  statusEl.classList.remove("is-done");
   statusEl.classList.add("is-error");
   statusText.textContent = `Failed — ${msg}`;
   statusSub.textContent = hint;
   barFill.style.width = "0%";
 }
 
+function showDone(msg, hint = "") {
+  statusEl.classList.remove("hidden");
+  statusEl.classList.remove("is-error");
+  statusEl.classList.add("is-done");
+  statusText.textContent = msg;
+  statusSub.textContent = hint;
+  barFill.style.width = "100%";
+}
+
 function friendlyError(raw) {
+  // The backend now writes high-signal errors directly (e.g. it lists the
+  // exact yt-dlp player_clients it tried). Don't second-guess them with a
+  // hardcoded override here — surface the backend message verbatim.
   const m = String(raw || "");
-  if (/youtu\.?be|youtube\.com/i.test(m) && /sign in|cookies|bot/i.test(m)) {
-    return {
-      msg: "YouTube blocks server-side downloads.",
-      hint: "Use Google Drive / Dropbox / a direct .mp4 link, or download the YouTube video to your computer first and upload it.",
-    };
-  }
   if (/HTTP 413/i.test(m) || /too large/i.test(m)) {
     return {
       msg: "File too large for direct upload through this preview URL.",
       hint: "Try the Paste URL tab with a Google Drive or Dropbox share link.",
     };
+  }
+  // For long backend messages we split on the first sentence so the headline
+  // stays scannable; the rest goes into the hint sub-line.
+  const dot = m.indexOf(". ");
+  if (dot > 0 && dot < m.length - 2) {
+    return { msg: m.slice(0, dot + 1), hint: m.slice(dot + 2) };
   }
   return { msg: m, hint: "" };
 }
@@ -107,6 +121,7 @@ form.addEventListener("submit", async (e) => {
   const subs = document.getElementById("subtitles").checked ? "1" : "0";
   const face = document.getElementById("face_track").checked ? "1" : "0";
   const language = (document.getElementById("language") || { value: "auto" }).value;
+  const captionStyle = (document.getElementById("caption_style") || { value: "hype_emoji" }).value;
 
   goBtn.disabled = true;
   resultsEl.classList.add("hidden");
@@ -124,7 +139,7 @@ form.addEventListener("submit", async (e) => {
       result = await xhrPostJSON("/api/upload_url", {
         url, goal, n_clips: nClips, clip_len: clipLen,
         safety_boost: safety, subtitles: subs, face_track: face,
-        language,
+        language, caption_style: captionStyle,
       });
     } else {
       const f = fileInput.files[0];
@@ -138,6 +153,7 @@ form.addEventListener("submit", async (e) => {
       fd.append("subtitles", subs);
       fd.append("face_track", face);
       fd.append("language", language);
+      fd.append("caption_style", captionStyle);
 
       setStatus("Uploading…", `${(f.size / (1024 * 1024)).toFixed(1)} MB`, 5);
       result = await xhrSendForm("/api/upload", fd);
@@ -245,7 +261,10 @@ async function pollJob(jobId) {
       renderClips(job, /*partial=*/true);
     } else if (job.status === "done") {
       const n = (job.clips || []).length;
-      setStatus(`Done — ${n} clip${n === 1 ? "" : "s"} ready`, "Scroll down to download", 100);
+      // showDone() flips the spinner off (is-done) instead of leaving it
+      // animating like setStatus() does — the spinner kept spinning after
+      // the job finished otherwise.
+      showDone(`Done — ${n} clip${n === 1 ? "" : "s"} ready`, "Scroll down to download");
       renderClips(job);
       return;
     } else if (job.status === "error") {

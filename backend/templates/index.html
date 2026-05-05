@@ -92,7 +92,7 @@
         <label class="url-input">
           <span class="url-label">Video URL</span>
           <input type="url" id="url" name="url" placeholder="Google Drive · Dropbox · YouTube · direct .mp4 link" />
-          <small class="muted">Server pulls the file directly — no upload size limit. Public-download links only.</small>
+          <small class="muted">Server pulls the file directly — no upload size limit. Public-download links only. <strong>YouTube</strong>: works on most public videos via mobile-client fallback; if a video is blocked, download the file locally and use Upload instead.</small>
         </label>
       </div>
 
@@ -189,6 +189,15 @@
                 </select>
               </label>
               <span class="addon-field-hint">Picking the language explicitly is more accurate than Auto, especially for Indonesian.</span>
+              <label class="addon-field" for="caption_style">
+                <span class="addon-field-label">Caption style</span>
+                <select name="caption_style" id="caption_style">
+                  {% for cs in caption_styles %}
+                  <option value="{{ cs.code }}"{% if cs.code == 'hype_emoji' %} selected{% endif %}>{{ cs.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <span class="addon-field-hint">Hype highlights the active word in yellow. Hype + Emoji adds a keyword emoji per phrase.</span>
             </span>
           </span>
         </label>

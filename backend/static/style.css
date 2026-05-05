@@ -462,6 +462,30 @@ main {
 .status-card.is-error #status-text { color: #ff7390; }
 .status-card.is-error .bar-fill { background: #ff7390; }
 
+/* When the job has finished successfully, freeze the spinner and turn it
+   into a solid green check ring so the UI stops feeling "still working".
+   setStatus() removes is-done at the start of the next run. */
+.status-card.is-done .spinner {
+  animation: none;
+  border-color: rgba(46, 213, 115, 0.85);
+  border-top-color: rgba(46, 213, 115, 0.85);
+  position: relative;
+  background: transparent;
+}
+.status-card.is-done .spinner::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 12px;
+  border-right: 2.5px solid #2ed573;
+  border-bottom: 2.5px solid #2ed573;
+  transform: rotate(45deg);
+}
+.status-card.is-done #status-text { color: #2ed573; }
+.status-card.is-done .bar-fill { background: #2ed573; }
+
 /* ─── Results ────────────────────────────────── */
 .results { margin-top: 24px; }
 .results-header {
